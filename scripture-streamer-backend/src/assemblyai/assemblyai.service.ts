@@ -2,8 +2,6 @@ import { Injectable } from "@nestjs/common";
 import { WebSocket } from 'ws';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import * as querystring from 'querystring';
-import { Readable, PassThrough } from 'stream';
-import ffmpeg from 'fluent-ffmpeg';
 
 interface ConnectionParams {
     sample_rate: number;
@@ -41,11 +39,8 @@ export class AssemblyAiService {
 
     @OnEvent('SendAudioBuffer')
     async handleAudioFromGateway(data: { userId: string, audioBuffer: Buffer }) {
-        // Convert to PCM16 before sending
-        const pcm16Buffer = await this.convertToPCM16(data.audioBuffer);
-        if (pcm16Buffer) {
-            this.sendAudioBuffer(data.userId, pcm16Buffer);
-        }
+        // iOS app already sends PCM16 mono 16kHz - no conversion needed!
+        this.sendAudioBuffer(data.userId, data.audioBuffer);
     }
 
     @OnEvent('StopStreaming')
@@ -59,12 +54,13 @@ export class AssemblyAiService {
     private setupEventHandlers(userId: string, ws: WebSocket) {
         // Setup WebSocket event handlers
         ws.on("open", () => {
-            console.log(`WebSocket connection opened to: ${this.endpoint}.`);
+            console.log(`✅ WebSocket connection opened to AssemblyAI: ${this.endpoint}`);
         });
         ws.on("message", (message) => {
             try {
             const data = JSON.parse(message.toString());
             const msgType = data.type;
+            console.log(`📨 AssemblyAI message type: ${msgType}`);
             if (msgType === "Begin") {
                 const sessionId = data.id;
                 const expiresAt = data.expires_at;
@@ -72,26 +68,33 @@ export class AssemblyAiService {
                 if (session) {
                     session.sessionId = sessionId;
                 }
+                console.log(`✅ AssemblyAI session started: ${sessionId}`);
                 this.eventEmitter.emit('Begin', {'userId': userId, 'sessionId': sessionId, 'expiresAt': expiresAt});
             } else if (msgType === "Turn") {
                 const transcript = data.transcript || "";
                 const formatted = data.turn_is_formatted;
                 const session = this.userSession.get(userId);
+                console.log(`📝 Transcript received: ${transcript}`);
                 this.eventEmitter.emit('Turn', {'userId': userId, 'data': data});
             } else if (msgType === "Termination") {
                 const audioDuration = data.audio_duration_seconds;
                 const sessionDuration = data.session_duration_seconds;
                 const session = this.userSession.get(userId);
                 this.eventEmitter.emit('Termination', {'userId': userId, 'sessionId': session?.sessionId || '', 'audioDuration': audioDuration, 'sessionDuration': sessionDuration});
+            } else if (msgType === "Error") {
+                console.error(`❌ AssemblyAI Error:`, data);
             }
             } catch (error) {
+            console.error(`❌ Error parsing AssemblyAI message:`, error);
             this.eventEmitter.emit('Error', {userId: userId, error: error});
             }
         });
         ws.on("error", (error) => {
+            console.error(`❌ AssemblyAI WebSocket error for user ${userId}:`, error);
             this.eventEmitter.emit('WebSocketError', {userId: userId, error:error});
         });
         ws.on("close", (code, reason) => {
+            console.log(`🔌 AssemblyAI WebSocket closed for user ${userId}. Code: ${code}, Reason: ${reason.toString()}`);
             this.eventEmitter.emit('WebSocketDisconnected', {userId: userId, status: code, Msg: reason})
         });
     }
@@ -101,8 +104,18 @@ export class AssemblyAiService {
      */
     async sendAudioBuffer(userId: string,audioBuffer: Buffer) {
         const session = this.userSession.get(userId);
+        console.log('📊 Session exists:', !!session);
+        if (session) {
+            console.log('📊 WS exists:', !!session.ws);
+            console.log('📊 WS readyState:', session.ws?.readyState);
+            console.log('📊 WS OPEN constant:', WebSocket.OPEN);
+            console.log('📊 stopRequested:', session.stopRequested);
+        }
         if (session && session.ws.readyState === WebSocket.OPEN && !session.stopRequested) {
             session.ws.send(audioBuffer);
+            console.log('✅ 真的发送了音频数据到AssemblyAI! Buffer size:', audioBuffer.length);
+        } else {
+            console.log('❌ Cannot send audio - connection not ready');
         }
     }
 
@@ -113,7 +126,7 @@ export class AssemblyAiService {
         const userConnectionParams: ConnectionParams = {
             sample_rate: 16000,
             format_turns: true,
-            encoding: 'pcm16',
+            encoding: 'pcm_s16le', // PCM signed 16-bit little-endian
             token: tempToken,
         };
 
@@ -128,6 +141,25 @@ export class AssemblyAiService {
         });
 
         this.setupEventHandlers(userId, userWs);
+
+        // Wait for WebSocket to be ready before resolving
+        return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                reject(new Error('WebSocket connection timeout'));
+            }, 10000); // 10 second timeout
+
+            userWs.on('open', () => {
+                clearTimeout(timeout);
+                console.log(`✅ AssemblyAI WebSocket ready for user: ${userId}`);
+                resolve();
+            });
+
+            userWs.on('error', (error) => {
+                clearTimeout(timeout);
+                console.error(`❌ AssemblyAI WebSocket error for user ${userId}:`, error);
+                reject(error);
+            });
+        });
     }
 
     /**
@@ -170,43 +202,4 @@ export class AssemblyAiService {
         }
     }
 
-    private async convertToPCM16(audioBuffer: Buffer): Promise<Buffer | null> {
-        return new Promise((resolve, reject) => {
-          const inputStream = new Readable();
-          inputStream.push(audioBuffer);
-          inputStream.push(null);
-    
-          const outputStream = new PassThrough();
-          const chunks: Buffer[] = [];
-    
-          outputStream.on('data', (chunk) => {
-            chunks.push(chunk);
-          });
-    
-          outputStream.on('end', () => {
-            const result = Buffer.concat(chunks);
-            resolve(result);
-          });
-    
-          outputStream.on('error', (error) => {
-            console.error('Output stream error:', error);
-            resolve(null);
-          });
-    
-          ffmpeg(inputStream)
-            .inputFormat('auto') // Auto-detect input format
-            .audioCodec('pcm_s16le') // PCM 16-bit little-endian
-            .audioFrequency(16000) // 16kHz sample rate
-            .audioChannels(1) // Mono
-            .format('s16le') // Raw PCM format
-            .on('error', (error) => {
-              console.error('FFmpeg conversion error:', error);
-              resolve(null);
-            })
-            .on('end', () => {
-              console.log('Audio conversion completed');
-            })
-            .pipe(outputStream, { end: true });
-        });
-      }
 }

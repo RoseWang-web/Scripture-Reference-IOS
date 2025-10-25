@@ -30,6 +30,45 @@ struct NoteView: View {
                         }
                 }
                 Text(note.content)
+                
+                // Real-time transcript display
+                if !audioStreamer.transcript.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Live Transcript:")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(audioStreamer.transcript)
+                            .font(.body)
+                            .padding()
+                            .background(Color.gray.opacity(0.1))
+                            .cornerRadius(8)
+                    }
+                }
+                
+                // Connection status
+                HStack {
+                    if audioStreamer.isConnected {
+                        Image(systemName: "wifi")
+                            .foregroundColor(.green)
+                        Text("Connected")
+                            .font(.caption)
+                            .foregroundColor(.green)
+                    } else {
+                        Image(systemName: "wifi.slash")
+                            .foregroundColor(.red)
+                        Text("Disconnected")
+                            .font(.caption)
+                            .foregroundColor(.red)
+                    }
+                    
+                    if audioStreamer.isRecordingAudio {
+                        Image(systemName: "mic.fill")
+                            .foregroundColor(.blue)
+                        Text("Recording")
+                            .font(.caption)
+                            .foregroundColor(.blue)
+                    }
+                }
             }
             .padding()
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -53,7 +92,7 @@ struct NoteView: View {
                             audioStreamer.stop()
                         } else {
                             viewModel.isDetecting = true
-                            audioStreamer.start()
+                            audioStreamer.startWithAudio()
                         }
                     }) {
                         Image(systemName: viewModel.isDetecting ? "stop.circle" : "person.wave.2")
@@ -61,6 +100,10 @@ struct NoteView: View {
                     }
                 }
             }
+        }
+        .onDisappear {
+            // Clear transcript when leaving the view
+            audioStreamer.clearTranscript()
         }
     }
 }
