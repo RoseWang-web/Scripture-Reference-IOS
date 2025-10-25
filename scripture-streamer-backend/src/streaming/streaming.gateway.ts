@@ -15,14 +15,14 @@ interface UserTranscript {
 const PLACEHOLDER_SUMMARY = "This is a placeholder summary";
 
 @WebSocketGateway({
-  cors: {
-    origin: '*',
-    credentials: true,
-  },
-  transports: ['websocket', 'polling'],
-  allowEIO3: true,
-  pingTimeout: 60000,
-  pingInterval: 25000,
+    cors: {
+        origin: '*',
+        credentials: true,
+    },
+    transports: ['websocket', 'polling'],
+    allowEIO3: true,
+    pingTimeout: 60000,
+    pingInterval: 25000,
 })
 export class StreamingGateway {
     private userTranscriptList: UserTranscript[];
@@ -37,7 +37,7 @@ export class StreamingGateway {
         console.log(`Client IP: ${client.handshake.address}`);
         console.log(`Client headers:`, client.handshake.headers);
     }
-    
+
     handleDisconnect(client: Socket) {
         console.log(`Client disconnected: ${client.id}`);
         // Save to database before cleanup
@@ -54,10 +54,10 @@ export class StreamingGateway {
 
     // Listen for events from frontend
     @SubscribeMessage('StartStreaming')
-    async handleFrontendStart(client: Socket, data: { userId: string}) {
+    async handleFrontendStart(client: Socket, data: { userId: string }) {
         console.log(`StartStreaming received for user: ${data.userId}`);
-        this.userTranscriptList.push({userId: data.userId, data: {} as JSON, socket: client, sessionId: undefined});
-        this.eventEmitter.emit('StartStreaming', {userId: data.userId});
+        this.userTranscriptList.push({ userId: data.userId, data: {} as JSON, socket: client, sessionId: undefined });
+        this.eventEmitter.emit('StartStreaming', { userId: data.userId });
     }
 
     @SubscribeMessage('SendAudioBuffer')
@@ -67,16 +67,16 @@ export class StreamingGateway {
         const userTranscript = this.userTranscriptList.find(ut => ut.socket === client);
         if (userTranscript) {
             console.log(`Audio data received for user: ${userTranscript.userId}, size: ${data.length} bytes`);
-            this.eventEmitter.emit('SendAudioBuffer', {userId: userTranscript.userId, audioBuffer: data});
+            this.eventEmitter.emit('SendAudioBuffer', { userId: userTranscript.userId, audioBuffer: data });
         } else {
             console.log(`Audio data received but no user found for socket`);
         }
     }
 
     @SubscribeMessage('StopStreaming')
-    async handleStreamingStop(data: { userId: string}) {
+    async handleStreamingStop(data: { userId: string }) {
         // Signal assemblyaiService to stop
-        this.eventEmitter.emit('StopStreaming', {userId: data.userId});
+        this.eventEmitter.emit('StopStreaming', { userId: data.userId });
 
         // Remove userTranscript from the list
         this.userTranscriptList = this.userTranscriptList.filter(ut => ut.userId !== data.userId);
@@ -84,15 +84,15 @@ export class StreamingGateway {
 
     // Listen for events from AssemblyAiService
     @OnEvent('Begin')
-    createUserTranscript(data: {userId: string, sessionId: string, expiresAt: string}) {
+    createUserTranscript(data: { userId: string, sessionId: string, expiresAt: string }) {
         const userTranscript = this.userTranscriptList.find(ut => ut.userId === data.userId);
         if (userTranscript) {
             userTranscript.sessionId = data.sessionId;
         }
     }
-    
+
     @OnEvent('Turn')
-    updateUserTranscript(data: {userId: string, data: JSON}) {
+    updateUserTranscript(data: { userId: string, data: JSON }) {
         const userTranscript = this.userTranscriptList.find(userTranscript => userTranscript.userId === data.userId);
         if (userTranscript) {
             userTranscript.data = data.data;
@@ -101,25 +101,25 @@ export class StreamingGateway {
             userTranscript.socket.emit('Turn', data.data);
         }
     }
-    
+
 
     @OnEvent('Termination')
-    async saveUserTranscriptToDatabase(data: {userId: string}) {
+    async saveUserTranscriptToDatabase(data: { userId: string }) {
         const userTranscript = this.userTranscriptList.find(userTranscript => userTranscript.userId === data.userId);
         if (userTranscript && userTranscript.sessionId) {
             // Get the complete, final transcript
             const finalTranscript = await this.getFinalTranscript(userTranscript.sessionId);
-            
+
             // Send to LLM Gateway for processing
             // should call the function that sends the transcript to the LLM Gateway
-            
+
             // Send summary to frontend (REMEBER TO REPLACE WITH THE ACTUAL SUMMARY)
             userTranscript.socket.emit('Summary', PLACEHOLDER_SUMMARY);
         }
     }
 
     private sendAudioBuffer(userId: string, audioBuffer: Buffer) {
-        this.eventEmitter.emit('SendAudioBuffer', {userId: userId, audioBuffer: audioBuffer});
+        this.eventEmitter.emit('SendAudioBuffer', { userId: userId, audioBuffer: audioBuffer });
     }
 
     private saveUserTranscript(userTranscript: UserTranscript) {

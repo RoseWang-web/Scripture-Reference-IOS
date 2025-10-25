@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket 連線測試器</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Socket.IO 客戶端，用於連線到 NestJS 的 Socket.IO Gateway -->
+    <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+    <style>
+        /* 確保字體好看 */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f4f7f9;
+        }
+
+        .log-area {
+            max-height: 400px;
+            overflow-y: scroll;
+            background-color: #1f2937;
+            color: #d1d5db;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            font-size: 0.85rem;
+        }
+
+        .log-success {
+            color: #34d399;
+        }
+
+        .log-error {
+            color: #f87171;
+        }
+
+        .log-info {
+            color: #60a5fa;
+        }
+    </style>
+</head>
+
+<body class="p-4 md:p-8">
+    <div class="max-w-4xl mx-auto bg-white shadow-2xl rounded-xl p-6 md:p-10">
+        <h1 class="text-3xl font-bold text-gray-800 mb-6 border-b pb-2">NestJS WebSocket 連線測試</h1>
+
+        <!-- 連線控制區 -->
+        <div class="space-y-4 mb-8 p-4 border rounded-lg bg-gray-50">
+            <div class="flex flex-col sm:flex-row sm:items-center space-y-2 sm:space-y-0 sm:space-x-4">
+                <label for="wsUrl" class="w-full sm:w-1/4 font-medium text-gray-700">伺服器 URL:</label>
+                <input type="text" id="wsUrl" value="ws://localhost:3000"
+                    class="flex-grow p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
+            </div>
+            <div class="flex space-x-4">
+                <button id="connectBtn"
+                    class="flex-1 px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition-colors shadow-md disabled:opacity-50">連線</button>
+                <button id="disconnectBtn"
+                    class="flex-1 px-4 py-2 bg-red-500 text-white font-semibold rounded-lg hover:bg-red-600 transition-colors shadow-md disabled:opacity-50"
+                    disabled>斷開</button>
+            </div>
+        </div>
+
+        <!-- 狀態顯示區 -->
+        <div class="mb-8 p-4 rounded-lg shadow-inner" id="statusBox">
+            <p class="font-bold text-gray-700">目前狀態: <span id="statusText" class="text-red-500">已斷線</span></p>
+        </div>
+
+        <!-- 訊息發送區 (Emit Message) -->
+        <div class="mb-8 p-4 border rounded-lg bg-gray-50">
+            <h2 class="text-xl font-semibold text-gray-800 mb-4">發送測試訊息</h2>
+            <div class="space-y-3">
+                <input type="text" id="eventInput" value="message" placeholder="事件名稱 (例如: message)"
+                    class="w-full p-2 border border-gray-300 rounded-md">
+                <textarea id="payloadInput" placeholder="訊息內容 (JSON格式，例如: { 'data': 'Hello' })" rows="3"
+                    class="w-full p-2 border border-gray-300 rounded-md resize-none">{"text": "Hello from client"}</textarea>
+                <button id="sendBtn"
+                    class="w-full px-4 py-2 bg-green-500 text-white font-semibold rounded-lg hover:bg-green-600 transition-colors shadow-md disabled:opacity-50"
+                    disabled>發送訊息</button>
+            </div>
+        </div>
+
+        <!-- 日誌輸出區 -->
+        <h2 class="text-xl font-semibold text-gray-800 mb-4">連線日誌</h2>
+        <div id="log" class="log-area">
+            <!-- 日誌訊息會顯示在這裡 -->
+        </div>
+    </div>
+
+    <script>
+        const wsUrlInput = document.getElementById('wsUrl');
+        const connectBtn = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const sendBtn = document.getElementById('sendBtn');
+        const statusText = document.getElementById('statusText');
+        const logArea = document.getElementById('log');
+        const eventInput = document.getElementById('eventInput');
+        const payloadInput = document.getElementById('payloadInput');
+        const statusBox = document.getElementById('statusBox');
+
+        // 使用 socket.io 客戶端
+        let socket = null;
+
+        function logMessage(message, type = 'info') {
+            const time = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            let typeClass = '';
+
+            if (type === 'success') {
+                typeClass = 'log-success';
+            } else if (type === 'error') {
+                typeClass = 'log-error font-bold';
+            } else if (type === 'info') {
+                typeClass = 'log-info';
+            }
+
+            logEntry.innerHTML = `<span class="text-gray-400">[${time}]</span> <span class="${typeClass}">[${type.toUpperCase()}]</span> ${message}`;
+            logArea.appendChild(logEntry);
+            // 捲動到底部
+            logArea.scrollTop = logArea.scrollHeight;
+        }
+
+        function updateStatus(isConnected) {
+            if (isConnected) {
+                statusText.textContent = '已連線';
+                statusText.className = 'text-green-500';
+                statusBox.className = 'mb-8 p-4 rounded-lg shadow-inner bg-green-50';
+                connectBtn.disabled = true;
+                disconnectBtn.disabled = false;
+                sendBtn.disabled = false;
+            } else {
+                statusText.textContent = '已斷線';
+                statusText.className = 'text-red-500';
+                statusBox.className = 'mb-8 p-4 rounded-lg shadow-inner bg-red-50';
+                connectBtn.disabled = false;
+                disconnectBtn.disabled = true;
+                sendBtn.disabled = true;
+            }
+        }
+
+        function handleConnect() {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                logMessage('已連線，無需重複操作', 'info');
+                return;
+            }
+
+            const url = wsUrlInput.value.trim();
+            logMessage(`嘗試連線至 (Socket.IO): ${url}`, 'info');
+
+            try {
+                // 使用 socket.io 客戶端連線。指定 transports: ['websocket'] 可以強制使用 websocket
+                socket = io(url, { transports: ['websocket'] });
+
+                socket.on('connect', () => {
+                    logMessage('**連線成功 (Socket.IO)**', 'success');
+                    updateStatus(true);
+                    logMessage(`Socket id: ${socket.id}`, 'info');
+                });
+
+                // 一般事件接收（例如 Gateway emit 的 'Turn'、'Summary' 等）
+                socket.onAny((event, payload) => {
+                    try {
+                        const pretty = typeof payload === 'object' ? JSON.stringify(payload) : String(payload);
+                        logMessage(`收到事件 '${event}': ${pretty}`, 'info');
+                    } catch (e) {
+                        logMessage(`收到事件 '${event}' (無法序列化 payload)`, 'info');
+                    }
+                });
+
+                socket.on('disconnect', (reason) => {
+                    logMessage(`連線中斷: ${reason}`, 'error');
+                    updateStatus(false);
+                });
+
+                socket.on('connect_error', (err) => {
+                    logMessage(`連線錯誤: ${err && err.message ? err.message : err}`, 'error');
+                });
+
+            } catch (e) {
+                logMessage(`連線啟動失敗: ${e.message}`, 'error');
+                updateStatus(false);
+            }
+        }
+
+        function handleDisconnect() {
+            if (socket) {
+                logMessage('要求斷開連線...', 'info');
+                socket.close();
+                socket = null;
+                updateStatus(false);
+            }
+        }
+
+        function handleSend() {
+            if (!socket || !socket.connected) {
+                logMessage('發送失敗：尚未連線或連線已關閉。', 'error');
+                return;
+            }
+
+            const event = eventInput.value.trim();
+            const payload = payloadInput.value.trim();
+
+            if (!event || !payload) {
+                logMessage('事件名稱或訊息內容不能為空。', 'error');
+                return;
+            }
+
+            try {
+                const data = JSON.parse(payload);
+                socket.emit(event, data);
+                logMessage(`✅ 發送 (emit): 事件 '${event}'，內容: ${payload}`, 'success');
+            } catch (e) {
+                logMessage(`發送失敗 (JSON 或其他錯誤): ${e.message}`, 'error');
+            }
+        }
+
+        // 事件監聽
+        connectBtn.addEventListener('click', handleConnect);
+        disconnectBtn.addEventListener('click', handleDisconnect);
+        sendBtn.addEventListener('click', handleSend);
+
+        // 初始化狀態
+        updateStatus(false);
+        logMessage('請確保 NestJS 伺服器正在運行，並點擊「連線」。', 'info');
+    </script>
+</body>
+
+</html>
