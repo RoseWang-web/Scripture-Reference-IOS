@@ -268,9 +268,7 @@ describe('AssemblyAiService', () => {
 
       expect(eventEmitter.emit).toHaveBeenCalledWith('Turn', {
         userId: userId,
-        sessionId: '',
-        transcript: 'Hello world',
-        formatted: true,
+        data: mockData,
       });
     });
 
