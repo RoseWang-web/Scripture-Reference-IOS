@@ -688,40 +688,230 @@ export class ScriptureService {
      *  如果只有N1 or Ni 沒有全部的Nephi 會可以嗎？
      */
 
-    toStudyUrl(key: string, lang = 'emg'): ScriptureReference | null {
+    //     
+
+
+    toStudyUrl(key: string, lang = 'eng'): ScriptureReference | null {
         if (!key) return null;
 
-        const normalizedKey = key.toLowerCase().replace(/[\.,]/g, ''.trim());
+        const normalizedKey = key.toLowerCase().replace(/[,]/g, '').trim();
 
         // Try multiple parsing patterns
         const patterns = [
             // "Second Nephi Chapter 1 verse 1"
-            /([A-Za-z0-9\s]+)\s+Chapter\s+(\d+)\s+verse\s+(\d+)*/gi,
-            // "2 Nephi 1:1", "Alma 32:21", "Doctrine and Covenants 1:1" 
-            /([A-Za-z0-9\s]+)\s+(\d+):(\d+)/gi,
-            // "Genesis Chpater 1 to 3"
-            /([A-Za-z0-9\s]+)\s+Chapter\s+(\d+)\s+to\s+(\d+)*/gi,
-            // "Genesis Chapter 1 verse 1 to 3"
-            /([A-Za-z0-9\s]+)\s+Chapter\s+(\d+)\s+verse\s+(\d+)\s+to\s+(\d+)*/gi,
-            // "Genesis 1:1-3"
-            /([A-Za-z0-9\s]+)\s+(\d+):(\d+)-(\d+)*/gi,
+            /([a-z0-9\s]+)\s+chapter\s+(\d+)\s+verse\s+(\d+)/i,
+            // "2 Nephi 1:1"
+            /([a-z0-9\s]+)\s+(\d+):(\d+)/i,
+            // 還未解決 -->　"Alma Chapter twenty one verse /twenty one"
+            /([a-z0-9\s]+)\s+chapter\s+twenty\s+one\s+verse\s+twenty\s+one/i,
+            // "Doctrine and Covenants 1:1"
+            /([a-z0-9\s]+)\s+(\d+):(\d+)/i,
+            // "Genesis 1:1"
+            /([a-z0-9\s]+)\s+(\d+):(\d+)/i
         ];
 
         let book = '';
         let chapter = '';
         let verse = '';
 
-        // Try each pattern until a match is found
+        // Try each pattern
         for (const pattern of patterns) {
             const match = normalizedKey.match(pattern);
             if (match) {
-                book = match[1];
+                book = match[1].trim();
                 chapter = match[2];
                 verse = match[3];
+                break;
+            }
+        }
+
+        // Fallback: try to extract from space-separated parts
+        if (!book) {
+            const parts = normalizedKey.split(/\s+/);
+            if (parts.length >= 3) {
+                // Try first 2-3 words as book name
+                for (let i = 2; i <= 3; i++) {
+                    const potentialBook = parts.slice(0, i).join(' ');
+                    if (this.findBookByAlias(potentialBook)) {
+                        book = potentialBook;
+                        chapter = parts[i] || '';
+                        verse = parts[i + 1] || '';
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (!book) return null;
+
+        // Find the book in our database
+        const bookInfo = this.findBookByAlias(book);
+        if (!bookInfo) return null;
+
+        // Validate chapter exists
+        const chapterNum = parseInt(chapter);
+        if (isNaN(chapterNum) || !bookInfo.chapters.includes(chapterNum)) {
+            return null;
+        }
+
+        // Generate URL
+        const baseUrl = 'https://www.churchofjesuschrist.org/study/scriptures';
+        let url = `${baseUrl}/${bookInfo.path}/${chapterNum}?lang=${lang}`;
+
+        // Add verse anchor if verse is provided
+        if (verse) {
+            const verseNum = parseInt(verse);
+            if (!isNaN(verseNum)) {
+                url += `&id=p${verseNum}#p${verseNum}`;
+            }
+        }
+
+        return {
+            book: bookInfo.name,
+            chapter: chapterNum,
+            verse: verse ? parseInt(verse) : undefined,
+            url
+        };
+    }
+
+    /**
+     * Find book by alias (supports various name formats)
+     */
+    private findBookByAlias(alias: string): ScriptureBook | null {
+        const normalizedAlias = alias.toLowerCase().trim();
+
+        // Direct lookup
+        if (this.scriptureDatabase[normalizedAlias]) {
+            return this.scriptureDatabase[normalizedAlias];
+        }
+
+        // Search through aliases
+        for (const [key, book] of Object.entries(this.scriptureDatabase)) {
+            if (book.aliases.some(a => a.toLowerCase() === normalizedAlias)) {
+                return book;
+            }
+        }
+
+        // Fuzzy matching for common variations
+        const fuzzyMatches = [
+            { pattern: /second\s+nephi/i, match: '2 nephi' },
+            { pattern: /first\s+nephi/i, match: '1 nephi' },
+            { pattern: /third\s+nephi/i, match: '3 nephi' },
+            { pattern: /fourth\s+nephi/i, match: '4 nephi' },
+            { pattern: /doctrine\s+and\s+covenants/i, match: 'doctrine and covenants' },
+            { pattern: /pearl\s+of\s+great\s+price/i, match: 'pearl of great price' },
+            { pattern: /old\s+testament/i, match: 'old testament' },
+            { pattern: /new\s+testament/i, match: 'new testament' },
+            { pattern: /book\s+of\s+mormon/i, match: 'book of mormon' }
+        ];
+
+        for (const fuzzyMatch of fuzzyMatches) {
+            if (fuzzyMatch.pattern.test(normalizedAlias)) {
+                return this.scriptureDatabase[fuzzyMatch.match];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Get all available books
+     */
+    getAllBooks(): ScriptureBook[] {
+        return Object.values(this.scriptureDatabase);
+    }
+
+    /**
+     * Search books by name
+     */
+    searchBooks(query: string): ScriptureBook[] {
+        const normalizedQuery = query.toLowerCase();
+        return Object.values(this.scriptureDatabase).filter(book =>
+            book.name.toLowerCase().includes(normalizedQuery) ||
+            book.aliases.some(alias => alias.toLowerCase().includes(normalizedQuery))
+        );
+    }
+
+    /**
+     * Process scripture detection event from AssemblyAI
+     * This method handles structured events when AssemblyAI detects scripture references
+     */
+    async processScriptureDetection(detectionData: {
+        text: string;
+        confidence?: number;
+        timestamp?: string;
+        metadata?: any;
+    }): Promise<ScriptureReference | null> {
+        try {
+            // Extract scripture reference from the detected text
+            const scriptureRef = this.toStudyUrl(detectionData.text);
+
+            if (scriptureRef) {
+                // Log scripture detection for now (can be extended with event emitter later)
+                console.log('Scripture detected:', {
+                    originalText: detectionData.text,
+                    scriptureReference: scriptureRef,
+                    confidence: detectionData.confidence,
+                    timestamp: detectionData.timestamp || new Date().toISOString(),
+                    metadata: detectionData.metadata
+                });
+
+                return scriptureRef;
             }
 
+            return null;
+        } catch (error) {
+            console.error('Error processing scripture detection:', error);
+            return null;
         }
-        return null; // tempo
+    }
 
+    /**
+     * Extract multiple scripture references from a text block
+     * Useful for processing longer transcripts that may contain multiple references
+     */
+    async extractScriptureReferences(text: string): Promise<ScriptureReference[]> {
+        const references: ScriptureReference[] = [];
+
+        // Common scripture reference patterns
+        const patterns = [
+            // "Second Nephi Chapter 1 verse 1"
+            /([A-Za-z0-9\s]+)\s+Chapter\s+(\d+)\s+verse\s+(\d+)[\.\s]*/gi,
+            // "2 Nephi 1:1", "Alma 32:21", "Doctrine and Covenants 1:1" 
+            /([A-Za-z0-9\s]+)\s+(\d+):(\d+)/gi,
+            // "Genesis Chpater 1 to 3"
+            /([A-Za-z0-9\s]+)\s+Chapter\s+(\d+)\s+to\s+(\d+)[\.\s]*/gi,
+            // "Genesis Chapter 1 verse 1 to 3"
+            /([A-Za-z0-9\s]+)\s+Chapter\s+(\d+)\s+verse\s+(\d+)\s+to\s+(\d+)[\.\s]*/gi,
+            // "Genesis 1:1-3"
+            /([A-Za-z0-9\s]+)\s+(\d+):(\d+)-(\d+)[\.\s]*/gi,
+        ]; ``
+
+        for (const pattern of patterns) {
+            let match;
+            while ((match = pattern.exec(text)) !== null) {
+                const fullMatch = match[0];
+                const scriptureRef = this.toStudyUrl(fullMatch);
+
+                if (scriptureRef && !references.some(ref => ref.url === scriptureRef.url)) {
+                    references.push(scriptureRef);
+                }
+            }
+        }
+
+        return references;
+    }
+
+    /**
+     * Validate scripture reference
+     */
+    validateScriptureReference(book: string, chapter: number, verse?: number): boolean {
+        const bookInfo = this.findBookByAlias(book);
+        if (!bookInfo) return false;
+
+        if (!bookInfo.chapters.includes(chapter)) return false;
+
+        // Additional verse validation could be added here if needed
+        return true;
     }
 }
