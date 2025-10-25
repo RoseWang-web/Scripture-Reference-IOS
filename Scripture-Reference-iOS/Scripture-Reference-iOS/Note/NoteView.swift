@@ -45,6 +45,39 @@ struct NoteView: View {
                     }
                 }
                 
+                // Scripture references display
+                if !audioStreamer.scriptureReferences.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Scripture References:")
+                            .font(.headline)
+                            .foregroundColor(.blue)
+                        
+                        ForEach(audioStreamer.scriptureReferences) { reference in
+                            Link(destination: URL(string: reference.url)!) {
+                                HStack {
+                                    Image(systemName: "book.fill")
+                                        .foregroundColor(.blue)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("\(reference.book) \(reference.chapter)\(reference.verse.map { ":\($0)" } ?? "")")
+                                            .font(.body)
+                                            .fontWeight(.semibold)
+                                        Text("Tap to open in browser")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "arrow.up.right.square")
+                                        .foregroundColor(.blue)
+                                }
+                                .padding()
+                                .background(Color.blue.opacity(0.1))
+                                .cornerRadius(8)
+                            }
+                        }
+                    }
+                    .padding(.top, 8)
+                }
+                
                 // Connection status
                 HStack {
                     if audioStreamer.isConnected {
