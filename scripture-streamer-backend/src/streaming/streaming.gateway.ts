@@ -16,14 +16,14 @@ interface UserTranscript {
 const PLACEHOLDER_SUMMARY = "This is a placeholder summary";
 
 @WebSocketGateway({
-  cors: {
-    origin: '*',
-    credentials: true,
-  },
-  transports: ['websocket', 'polling'],
-  allowEIO3: true,
-  pingTimeout: 60000,
-  pingInterval: 25000,
+    cors: {
+        origin: '*',
+        credentials: true,
+    },
+    transports: ['websocket', 'polling'],
+    allowEIO3: true,
+    pingTimeout: 60000,
+    pingInterval: 25000,
 })
 export class StreamingGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @WebSocketServer()
@@ -53,7 +53,7 @@ export class StreamingGateway implements OnGatewayConnection, OnGatewayDisconnec
         // Send a test message to confirm connection
         client.emit('connection', { message: 'Connected to Scripture Streamer Backend' });
     }
-    
+
     handleDisconnect(client: Socket) {
         console.log(`Client disconnected: ${client.id}`);
         // Save to database before cleanup
@@ -70,10 +70,10 @@ export class StreamingGateway implements OnGatewayConnection, OnGatewayDisconnec
 
     // Listen for events from frontend
     @SubscribeMessage('StartStreaming')
-    async handleFrontendStart(client: Socket, data: { userId: string}) {
+    async handleFrontendStart(client: Socket, data: { userId: string }) {
         console.log(`🔥 StartStreaming received for user: ${data.userId}`);
-        this.userTranscriptList.push({userId: data.userId, data: {} as JSON, socket: client, sessionId: undefined});
-        this.eventEmitter.emit('StartStreaming', {userId: data.userId});
+        this.userTranscriptList.push({ userId: data.userId, data: {} as JSON, socket: client, sessionId: undefined });
+        this.eventEmitter.emit('StartStreaming', { userId: data.userId });
     }
 
     @SubscribeMessage('SendAudioBuffer')
@@ -85,18 +85,18 @@ export class StreamingGateway implements OnGatewayConnection, OnGatewayDisconnec
             // Data comes as base64 string from iOS app - decode it to binary
             const audioBuffer = Buffer.from(data, 'base64');
             console.log(`Audio data received for user: ${userTranscript.userId}, decoded size: ${audioBuffer.length} bytes`);
-            this.eventEmitter.emit('SendAudioBuffer', {userId: userTranscript.userId, audioBuffer: audioBuffer});
+            this.eventEmitter.emit('SendAudioBuffer', { userId: userTranscript.userId, audioBuffer: audioBuffer });
         } else {
             console.log(`Audio data received but no user found for socket`);
         }
     }
 
     @SubscribeMessage('StopStreaming')
-    async handleStreamingStop(client: Socket, data: { userId: string}) {
+    async handleStreamingStop(client: Socket, data: { userId: string }) {
         console.log(`🛑 StopStreaming received for user: ${data.userId}`);
         
         // Signal assemblyaiService to stop
-        this.eventEmitter.emit('StopStreaming', {userId: data.userId});
+        this.eventEmitter.emit('StopStreaming', { userId: data.userId });
 
         // Find the user and send confirmation
         const userTranscript = this.userTranscriptList.find(ut => ut.userId === data.userId);
@@ -114,15 +114,15 @@ export class StreamingGateway implements OnGatewayConnection, OnGatewayDisconnec
 
     // Listen for events from AssemblyAiService
     @OnEvent('Begin')
-    createUserTranscript(data: {userId: string, sessionId: string, expiresAt: string}) {
+    createUserTranscript(data: { userId: string, sessionId: string, expiresAt: string }) {
         const userTranscript = this.userTranscriptList.find(ut => ut.userId === data.userId);
         if (userTranscript) {
             userTranscript.sessionId = data.sessionId;
         }
     }
-    
+
     @OnEvent('Turn')
-    updateUserTranscript(data: {userId: string, data: any}) {
+    updateUserTranscript(data: { userId: string, data: JSON }) {
         const userTranscript = this.userTranscriptList.find(userTranscript => userTranscript.userId === data.userId);
         if (userTranscript) {
             userTranscript.data = data.data;
@@ -132,25 +132,25 @@ export class StreamingGateway implements OnGatewayConnection, OnGatewayDisconnec
             userTranscript.socket.emit('Turn', data.data);
         }
     }
-    
+
 
     @OnEvent('Termination')
-    async saveUserTranscriptToDatabase(data: {userId: string}) {
+    async saveUserTranscriptToDatabase(data: { userId: string }) {
         const userTranscript = this.userTranscriptList.find(userTranscript => userTranscript.userId === data.userId);
         if (userTranscript && userTranscript.sessionId) {
             // Get the complete, final transcript
             const finalTranscript = await this.getFinalTranscript(userTranscript.sessionId);
-            
+
             // Send to LLM Gateway for processing
             // should call the function that sends the transcript to the LLM Gateway
-            
+
             // Send summary to frontend (REMEBER TO REPLACE WITH THE ACTUAL SUMMARY)
             userTranscript.socket.emit('Summary', PLACEHOLDER_SUMMARY);
         }
     }
 
     private sendAudioBuffer(userId: string, audioBuffer: Buffer) {
-        this.eventEmitter.emit('SendAudioBuffer', {userId: userId, audioBuffer: audioBuffer});
+        this.eventEmitter.emit('SendAudioBuffer', { userId: userId, audioBuffer: audioBuffer });
     }
 
     private saveUserTranscript(userTranscript: UserTranscript) {
