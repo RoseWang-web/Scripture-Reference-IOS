@@ -1,4 +1,5 @@
 {
+  "type": "module",
   "name": "scripture-streamer-backend",
   "version": "0.0.1",
   "description": "",
@@ -24,6 +25,8 @@
     "@nestjs/core": "^11.0.1",
     "@nestjs/event-emitter": "^3.0.1",
     "@nestjs/platform-express": "^11.0.1",
+    "axios": "^1.12.2",
+    "redis": "^5.9.0",
     "@nestjs/platform-socket.io": "^11.1.7",
     "@nestjs/websockets": "^11.1.7",
     "@types/fluent-ffmpeg": "^2.1.28",
