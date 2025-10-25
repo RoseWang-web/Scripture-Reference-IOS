@@ -69,7 +69,7 @@ export class AssemblyAiService {
                 const transcript = data.transcript || "";
                 const formatted = data.turn_is_formatted;
                 const session = this.userSession.get(userId);
-                this.eventEmitter.emit('Turn', {'userId': userId, 'sessionId': session?.sessionId || '', 'transcript': transcript, 'formatted': formatted});
+                this.eventEmitter.emit('Turn', {'userId': userId, 'data': data});
             } else if (msgType === "Termination") {
                 const audioDuration = data.audio_duration_seconds;
                 const sessionDuration = data.session_duration_seconds;
