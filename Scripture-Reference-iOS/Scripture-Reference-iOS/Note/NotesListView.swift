@@ -9,7 +9,7 @@ import SwiftUI
 
 struct NotesListView: View {
     @StateObject var viewModel = NoteViewModel()
-    
+
     var body: some View {
         NavigationStack {
             List {
@@ -28,7 +28,8 @@ struct NotesListView: View {
                                 }
                             }
                             .onDelete { indexSet in
-                                viewModel.delete(at: indexSet)
+                                let idsToDelete = indexSet.map { notesInSection[$0].id }
+                                viewModel.hardcodedNote.removeAll { idsToDelete.contains($0.id) }
                             }
                         }
                     }
@@ -53,3 +54,4 @@ struct NotesListView: View {
 #Preview {
     NotesListView()
 }
+ 
