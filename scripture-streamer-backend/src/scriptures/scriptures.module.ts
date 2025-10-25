@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
-import { ScriptureService } from './scriptures.service';
+import { ScripturesService } from './scriptures.service';
 import { ScriptureController } from './scriptures.controller';
 
 @Module({
-    providers: [ScriptureService],
+    providers: [ScripturesService],
     controllers: [ScriptureController],
-    exports: [ScriptureService],
+    exports: [ScripturesService],
 })
 export class ScripturesModule { }

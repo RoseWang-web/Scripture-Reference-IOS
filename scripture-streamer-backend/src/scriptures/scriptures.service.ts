@@ -4,7 +4,11 @@ export interface ScriptureReference {
     book: string;
     chapter: number;
     verse?: number;
+    endVerse?: number;
+    endChapter?: number;
     url: string;
+    // original Text, help to debug parsing issues
+    originalText: string;
 }
 
 export interface ScriptureBook {
@@ -15,8 +19,29 @@ export interface ScriptureBook {
     chapters: number[];
 }
 
+// AssemblyAI Word Search Match Interface
+export interface AssemblyAIWordMatch {
+    text: string;
+    results: {
+        start: number; //start time in milliseconds
+        end: number; //end time in milliseconds
+    }[];
+}
+// AssemblyAI 完整轉錄稿物件的簡化表示，用於我們的方法輸入
+export interface AssemblyAITranscript {
+    text: string;
+    word_search_matches: AssemblyAIWordMatch[];
+    // otherwords
+}
+
+// 經文引用及時間戳記的輸出結構
+export interface TimedScriptureReference extends ScriptureReference {
+    startMs: number;
+    endMs: number;
+}
+
 @Injectable()
-export class ScriptureService {
+export class ScripturesService {
     // Complete scripture database based on churchofjesuschrist.org structure
     private readonly scriptureDatabase: Record<string, ScriptureBook> = {
         // Book of Mormon
@@ -667,7 +692,86 @@ export class ScriptureService {
             chapters: Array.from({ length: 22 }, (_, i) => i + 1)
         }
     };
+
+    // numberWordsToNumbers mapping
+    private readonly wordToNumberMap: Record<string, number> = {
+        // 1-20
+        'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10,
+        'eleven': 11, 'twelve': 12, 'thirteen': 13, 'fourteen': 14, 'fifteen': 15, 'sixteen': 16, 'seventeen': 17, 'eighteen': 18, 'nineteen': 19,
+        // Tens
+        'twenty': 20, 'thirty': 30, 'forty': 40, 'fifty': 50, 'sixty': 60, 'seventy': 70, 'eighty': 80, 'ninety': 90,
+        // Hundreds
+        'hundred': 100, 'one hundred': 100,
+
+        // Combinations 21-99 (考慮到轉錄的空格和連字符)
+        // 21-29
+        'twenty one': 21, 'twenty-one': 21, 'twenty two': 22, 'twenty-two': 22, 'twenty three': 23, 'twenty-three': 23, 'twenty four': 24, 'twenty-four': 24, 'twenty five': 25, 'twenty-five': 25, 'twenty six': 26, 'twenty-six': 26, 'twenty seven': 27, 'twenty-seven': 27, 'twenty eight': 28, 'twenty-eight': 28, 'twenty nine': 29, 'twenty-nine': 29,
+        // 31-39
+        'thirty one': 31, 'thirty-one': 31, 'thirty two': 32, 'thirty-two': 32, 'thirty three': 33, 'thirty-three': 33, 'thirty four': 34, 'thirty-four': 34, 'thirty five': 35, 'thirty-five': 35, 'thirty six': 36, 'thirty-six': 36, 'thirty seven': 37, 'thirty-seven': 37, 'thirty eight': 38, 'thirty-eight': 38, 'thirty nine': 39, 'thirty-nine': 39,
+        // 41-49
+        'forty one': 41, 'forty-one': 41, 'forty two': 42, 'forty-two': 42, 'forty three': 43, 'forty-three': 43, 'forty four': 44, 'forty-four': 44, 'forty five': 45, 'forty-five': 45, 'forty six': 46, 'forty-six': 46, 'forty seven': 47, 'forty-seven': 47, 'forty eight': 48, 'forty-eight': 48, 'forty nine': 49, 'forty-nine': 49,
+        // 51-59
+        'fifty one': 51, 'fifty-one': 51, 'fifty two': 52, 'fifty-two': 52, 'fifty three': 53, 'fifty-three': 53, 'fifty four': 54, 'fifty-four': 54, 'fifty five': 55, 'fifty-five': 55, 'fifty six': 56, 'fifty-six': 56, 'fifty seven': 57, 'fifty-seven': 57, 'fifty eight': 58, 'fifty-eight': 58, 'fifty nine': 59, 'fifty-nine': 59,
+        // 61-69
+        'sixty one': 61, 'sixty-one': 61, 'sixty two': 62, 'sixty-two': 62, 'sixty three': 63, 'sixty-three': 63, 'sixty four': 64, 'sixty-four': 64, 'sixty five': 65, 'sixty-five': 65, 'sixty six': 66, 'sixty-six': 66, 'sixty seven': 67, 'sixty-seven': 67, 'sixty eight': 68, 'sixty-eight': 68, 'sixty nine': 69, 'sixty-nine': 69,
+        // 71-79
+        'seventy one': 71, 'seventy-one': 71, 'seventy two': 72, 'seventy-two': 72, 'seventy three': 73, 'seventy-three': 73, 'seventy four': 74, 'seventy-four': 74, 'seventy five': 75, 'seventy-five': 75, 'seventy six': 76, 'seventy-six': 76, 'seventy seven': 77, 'seventy-seven': 77, 'seventy eight': 78, 'seventy-eight': 78, 'seventy nine': 79, 'seventy-nine': 79,
+        // 81-89
+        'eighty one': 81, 'eighty-one': 81, 'eighty two': 82, 'eighty-two': 82, 'eighty three': 83, 'eighty-three': 83, 'eighty four': 84, 'eighty-four': 84, 'eighty five': 85, 'eighty-five': 85, 'eighty six': 86, 'eighty-six': 86, 'eighty seven': 87, 'eighty-seven': 87, 'eighty eight': 88, 'eighty-eight': 88, 'eighty nine': 89, 'eighty-nine': 89,
+        // 91-99
+        'ninety one': 91, 'ninety-one': 91, 'ninety two': 92, 'ninety-two': 92, 'ninety three': 93, 'ninety-three': 93, 'ninety four': 94, 'ninety-four': 94, 'ninety five': 95, 'ninety-five': 95, 'ninety six': 96, 'ninety-six': 96, 'ninety seven': 97, 'ninety-seven': 97, 'ninety eight': 98, 'ninety-eight': 98, 'ninety nine': 99, 'ninety-nine': 99,
+
+        // 100-140 (包含 "one hundred and X" 的常見口語格式)
+        'one hundred one': 101, 'one hundred and one': 101,
+        'one hundred two': 102, 'one hundred and two': 102,
+        'one hundred three': 103, 'one hundred and three': 103,
+        'one hundred four': 104, 'one hundred and four': 104,
+        'one hundred five': 105, 'one hundred and five': 105,
+        'one hundred six': 106, 'one hundred and six': 106,
+        'one hundred seven': 107, 'one hundred and seven': 107,
+        'one hundred eight': 108, 'one hundred and eight': 108,
+        'one hundred nine': 109, 'one hundred and nine': 109,
+        'one hundred ten': 110, 'one hundred and ten': 110,
+        'one hundred eleven': 111, 'one hundred and eleven': 111,
+        'one hundred twelve': 112, 'one hundred and twelve': 112,
+        'one hundred thirteen': 113, 'one hundred and thirteen': 113,
+        'one hundred fourteen': 114, 'one hundred and fourteen': 114,
+        'one hundred fifteen': 115, 'one hundred and fifteen': 115,
+        'one hundred sixteen': 116, 'one hundred and sixteen': 116,
+        'one hundred seventeen': 117, 'one hundred and seventeen': 117,
+        'one hundred eighteen': 118, 'one hundred and eighteen': 118,
+        'one hundred nineteen': 119, 'one hundred and nineteen': 119,
+        'one hundred twenty': 120, 'one hundred and twenty': 120,
+        'one hundred twenty one': 121, 'one hundred and twenty one': 121,
+        'one hundred twenty two': 122, 'one hundred and twenty two': 122,
+        'one hundred twenty three': 123, 'one hundred and twenty three': 123,
+        'one hundred twenty four': 124, 'one hundred and twenty four': 124,
+        'one hundred twenty five': 125, 'one hundred and twenty five': 125,
+        'one hundred twenty six': 126, 'one hundred and twenty six': 126,
+        'one hundred twenty seven': 127, 'one hundred and twenty seven': 127,
+        'one hundred twenty eight': 128, 'one hundred and twenty eight': 128,
+        'one hundred twenty nine': 129, 'one hundred and twenty nine': 129,
+        'one hundred thirty': 130, 'one hundred and thirty': 130,
+        'one hundred thirty one': 131, 'one hundred and thirty one': 131,
+        'one hundred thirty two': 132, 'one hundred and thirty two': 132,
+        'one hundred thirty three': 133, 'one hundred and thirty three': 133,
+        'one hundred thirty four': 134, 'one hundred and thirty four': 134,
+        'one hundred thirty five': 135, 'one hundred and thirty five': 135,
+        'one hundred thirty six': 136, 'one hundred and thirty six': 136,
+        'one hundred thirty seven': 137, 'one hundred and thirty seven': 137,
+        'one hundred thirty eight': 138, 'one hundred and thirty eight': 138,
+        'one hundred thirty nine': 139, 'one hundred and thirty nine': 139,
+        'one hundred forty': 140, 'one hundred and forty': 140,
+    };
+
+    private normalizeForLookup(text: string): string {
+        return text
+            .toLowerCase()
+            .trim()
+            .replace(/[\s\-\.&,]/g, ''); // 移除空格、連字符(-)、&、點號(.)和逗號(,)
+    }
     /**
+     * According to alias to find the scripture data
      * Parse scripture reference and generate URL
      * Supports various formats:
      * - "Second Nephi Chapter 1 verse 1"
@@ -688,126 +792,182 @@ export class ScriptureService {
      *  如果只有N1 or Ni 沒有全部的Nephi 會可以嗎？
      */
 
-    //     
+    public findBookByAlias(alias: string): ScriptureBook | null {
+        if (!alias) return null;
 
-
-    toStudyUrl(key: string, lang = 'eng'): ScriptureReference | null {
-        if (!key) return null;
-
-        const normalizedKey = key.toLowerCase().replace(/[,]/g, '').trim();
-
-        // Try multiple parsing patterns
-        const patterns = [
-            // "Second Nephi Chapter 1 verse 1"
-            /([a-z0-9\s]+)\s+chapter\s+(\d+)\s+verse\s+(\d+)/i,
-            // "2 Nephi 1:1"
-            /([a-z0-9\s]+)\s+(\d+):(\d+)/i,
-            // 還未解決 -->　"Alma Chapter twenty one verse /twenty one"
-            /([a-z0-9\s]+)\s+chapter\s+twenty\s+one\s+verse\s+twenty\s+one/i,
-            // "Doctrine and Covenants 1:1"
-            /([a-z0-9\s]+)\s+(\d+):(\d+)/i,
-            // "Genesis 1:1"
-            /([a-z0-9\s]+)\s+(\d+):(\d+)/i
-        ];
-
-        let book = '';
-        let chapter = '';
-        let verse = '';
-
-        // Try each pattern
-        for (const pattern of patterns) {
-            const match = normalizedKey.match(pattern);
-            if (match) {
-                book = match[1].trim();
-                chapter = match[2];
-                verse = match[3];
-                break;
-            }
-        }
-
-        // Fallback: try to extract from space-separated parts
-        if (!book) {
-            const parts = normalizedKey.split(/\s+/);
-            if (parts.length >= 3) {
-                // Try first 2-3 words as book name
-                for (let i = 2; i <= 3; i++) {
-                    const potentialBook = parts.slice(0, i).join(' ');
-                    if (this.findBookByAlias(potentialBook)) {
-                        book = potentialBook;
-                        chapter = parts[i] || '';
-                        verse = parts[i + 1] || '';
-                        break;
-                    }
-                }
-            }
-        }
-
-        if (!book) return null;
-
-        // Find the book in our database
-        const bookInfo = this.findBookByAlias(book);
-        if (!bookInfo) return null;
-
-        // Validate chapter exists
-        const chapterNum = parseInt(chapter);
-        if (isNaN(chapterNum) || !bookInfo.chapters.includes(chapterNum)) {
-            return null;
-        }
-
-        // Generate URL
-        const baseUrl = 'https://www.churchofjesuschrist.org/study/scriptures';
-        let url = `${baseUrl}/${bookInfo.path}/${chapterNum}?lang=${lang}`;
-
-        // Add verse anchor if verse is provided
-        if (verse) {
-            const verseNum = parseInt(verse);
-            if (!isNaN(verseNum)) {
-                url += `&id=p${verseNum}#p${verseNum}`;
-            }
-        }
-
-        return {
-            book: bookInfo.name,
-            chapter: chapterNum,
-            verse: verse ? parseInt(verse) : undefined,
-            url
-        };
-    }
-
-    /**
-     * Find book by alias (supports various name formats)
-     */
-    private findBookByAlias(alias: string): ScriptureBook | null {
+        // Normalize the alias for consistent lookup
         const normalizedAlias = alias.toLowerCase().trim();
 
-        // Direct lookup
-        if (this.scriptureDatabase[normalizedAlias]) {
-            return this.scriptureDatabase[normalizedAlias];
+        // Direct lookup by name (key)
+        const directMatch = this.scriptureDatabase[normalizedAlias];
+        if (directMatch) {
+            return directMatch;
         }
 
         // Search through aliases
-        for (const [key, book] of Object.entries(this.scriptureDatabase)) {
-            if (book.aliases.some(a => a.toLowerCase() === normalizedAlias)) {
+        for (const key in this.scriptureDatabase) {
+            const book = this.scriptureDatabase[key];
+            // 對於每本書，檢查它的所有別名中是否有與標準化後的輸入匹配的項目
+            const aliasMatch = book.aliases.some(a => a.toLowerCase() === normalizedAlias);
+
+            if (aliasMatch) {
                 return book;
             }
         }
+        return null;
+    }
+    /**
+     * Transfer number words to numbers
+     * E.g., "twenty one" -> 21
+     * @param text The number in words
+     */
+    private convertWordsToNumbers(text: string): string {
+        let convertedText = text.toLowerCase().trim();
 
-        // Fuzzy matching for common variations
-        const fuzzyMatches = [
-            { pattern: /second\s+nephi/i, match: '2 nephi' },
-            { pattern: /first\s+nephi/i, match: '1 nephi' },
-            { pattern: /third\s+nephi/i, match: '3 nephi' },
-            { pattern: /fourth\s+nephi/i, match: '4 nephi' },
-            { pattern: /doctrine\s+and\s+covenants/i, match: 'doctrine and covenants' },
-            { pattern: /pearl\s+of\s+great\s+price/i, match: 'pearl of great price' },
-            { pattern: /old\s+testament/i, match: 'old testament' },
-            { pattern: /new\s+testament/i, match: 'new testament' },
-            { pattern: /book\s+of\s+mormon/i, match: 'book of mormon' }
-        ];
+        convertedText = convertedText.replace(/\s+through\s+/gi, '-'); // "through" -> "-"
+        convertedText = convertedText.replace(/\s+to\s+/gi, '-');     // "to" -> "-"
+        convertedText = convertedText.replace(/\s+and\s+/gi, ',');    // "and" -> ","
+        convertedText = convertedText.replace(/\s+:\s+/gi, ':');
 
-        for (const fuzzyMatch of fuzzyMatches) {
-            if (fuzzyMatch.pattern.test(normalizedAlias)) {
-                return this.scriptureDatabase[fuzzyMatch.match];
+        // Replace number words with digits
+        const sortedWords = Object.keys(this.wordToNumberMap).sort((a, b) => b.length - a.length);
+
+
+        for (const word of sortedWords) {
+            const num = this.wordToNumberMap[word];
+            convertedText = convertedText.replace(new RegExp('\\b' + word + '\\b', 'gi'), num.toString());
+        }
+        // Clean up any duplicate keywords that may have arisen during replacement
+        convertedText = convertedText.replace(/chapter\s+chapter/gi, 'chapter');
+        convertedText = convertedText.replace(/verse\s+verse/gi, 'verse');
+
+        return convertedText;
+    }
+
+    /**
+     * Get all book aliases in the scripture database for AaemblyAI Word Search usage
+     */
+    public getAllBookAliases(): string[] {
+        const aliases = new Set<string>();
+        for (const book of Object.values(this.scriptureDatabase)) {
+            book.aliases.forEach(alias => aliases.add(alias));
+        }
+
+        // Return all unique aliases as an array
+        return Array.from(aliases);
+    }
+    /**
+     * 
+     * 
+     * 
+     *  
+     */
+    public toStudyUrl(key: string, originslText: string, lang: string = 'eng'): ScriptureReference | null {
+        if (!key) return null;
+
+        let cleanKey = key.toLowerCase();
+        // convert to numbers
+        cleanKey = this.convertWordsToNumbers(cleanKey);
+
+        // convert chapter and verse to standard note
+        cleanKey = cleanKey
+            .replace(/\s+chapter\s+/g, ' ')
+            .replace(/\s+verse\s+/g, ':') // for only 1 verse
+            .replace(/:\s+/g, ':')
+            .replace(/,(\s*)/g, ',')
+
+
+        // Scripture Format：(Book) (Chapter):(VerseStart) (range/list)
+        // Support: (Book) (Chapter):(VerseStart-VerseEnd, Verse, VerseStart-VerseEnd)
+        const verseRangeRegex = /([a-z0-9\s]+)\s+(\d+):([\d\-,]+)/;
+
+        // Chpater Verse Format：(Book) (ChapterStart)-(ChapterEnd)
+        // Support: (Book) (ChapterStart) to/through (ChapterEnd)
+        const chapterRangeRegex = /([a-z0-9\s]+)\s+(\d+)\s*-\s*(\d+)\s*(?!:)/;
+
+        // single scripture Format：(Book) (Chapter)
+        const chapterOnlyRegex = /([a-z0-9\s]+)\s+(\d+)\s*(?![:\-])/;
+
+        let match;
+        let bookAlias: string;
+        let chapter: number;
+        let verse: number = 0;
+        let endVerse: number = 0;
+        let endChapter: number = 0;
+        let urlFragment: string = '';
+        let originalText: string = '';
+
+        // --- Attempt to match scripture scale (Book Chapter:Verse[s]) ---
+        if ((match = cleanKey.match(verseRangeRegex))) {
+            bookAlias = match[1].trim();
+            chapter = parseInt(match[2], 10);
+            const verseList = match[3];
+
+            const firstVerseMatch = verseList.match(/(\d+)/);
+            if (firstVerseMatch) {
+                verse = parseInt(firstVerseMatch[1], 10);
+            } else {
+                return null;
+            }
+            // For find the end verse
+            const allNumbers = verseList.match(/(\d+)/g);
+            if (allNumbers && allNumbers.length > 1) {
+                const lastNumber = parseInt(allNumbers[allNumbers.length - 1], 10);
+                if (lastNumber !== verse) {
+                    endVerse = lastNumber;
+                }
+            } else if (verseList.includes('-')) {
+                // 只有一個範圍，例如 '1-3'
+                const parts = verseList.split('-');
+                if (parts.length === 2) {
+                    endVerse = parseInt(parts[1], 10);
+                }
+            }
+
+            // 處理 URL 片段
+            urlFragment = `${chapter}/${verse}`;
+            if (endVerse) urlFragment += `-${endVerse}`;
+
+            // --- 嘗試匹配章節範圍 (Book Chapter-Chapter) ---
+        } else if ((match = cleanKey.match(chapterRangeRegex))) {
+            bookAlias = match[1].trim();
+            chapter = parseInt(match[2], 10); // Start Chapter
+            endChapter = parseInt(match[3], 10); // End Chapter
+
+            // URL 結構：/book/chapterStart-chapterEnd
+            urlFragment = `${chapter}-${endChapter}`;
+
+            // --- 嘗試匹配單章節 (Book Chapter) ---
+        } else if ((match = cleanKey.match(chapterOnlyRegex))) {
+            bookAlias = match[1].trim();
+            chapter = parseInt(match[2], 10);
+            urlFragment = `${chapter}`;
+
+        } else {
+            return null; // 無法匹配任何已知格式
+        }
+
+        // ----------------------------------------------------
+        // 處理匹配到的結果 (Book Alias, Chapter, Verse/Range)
+        // ----------------------------------------------------
+
+        const book = this.findBookByAlias(bookAlias);
+
+        if (book) {
+            // 驗證起始章節是否存在
+            if (book.chapters.includes(chapter)) {
+                // 構建 URL (簡化，實際應用中會更複雜)
+                const url = `https://www.churchofjesuschrist.org/study/${book.path}/${urlFragment}?lang=${lang}`;
+
+                return {
+                    book: book.name,
+                    chapter: chapter,
+                    verse: verse, // 只有單節時有值
+                    endVerse: endVerse,
+                    endChapter: endChapter,
+                    url: url,
+                    originalText: originalText // 存儲原始文字
+                };
             }
         }
 
@@ -815,103 +975,123 @@ export class ScriptureService {
     }
 
     /**
-     * Get all available books
+     * 從 AssemblyAI Word Search 結果中提取經文引用。
+     * 這是兩階段偵測的第二階段。
+     * * @param fullTranscript 完整的音訊轉錄文本
+     * @param matches AssemblyAI Word Search 匹配到的書名結果
+     * @param contextWindow 擷取書名周圍文本的字元數量 (例如 50)
+     * @returns 經文引用列表
      */
-    getAllBooks(): ScriptureBook[] {
-        return Object.values(this.scriptureDatabase);
-    }
+    public processWordSearchResults(
+        fullTranscript: string,
+        matches: AssemblyAIWordMatch[],
+        contextWindow: number = 70 // 增加上下文視窗，以捕捉更長的範圍引用
+    ): ScriptureReference[] {
+        const detectedReferences: ScriptureReference[] = [];
+        const processedReferences = new Set<string>(); // 用來避免重複檢測
 
-    /**
-     * Search books by name
-     */
-    searchBooks(query: string): ScriptureBook[] {
-        const normalizedQuery = query.toLowerCase();
-        return Object.values(this.scriptureDatabase).filter(book =>
-            book.name.toLowerCase().includes(normalizedQuery) ||
-            book.aliases.some(alias => alias.toLowerCase().includes(normalizedQuery))
-        );
-    }
+        for (const match of matches) {
+            const bookAlias = match.text;
 
-    /**
-     * Process scripture detection event from AssemblyAI
-     * This method handles structured events when AssemblyAI detects scripture references
-     */
-    async processScriptureDetection(detectionData: {
-        text: string;
-        confidence?: number;
-        timestamp?: string;
-        metadata?: any;
-    }): Promise<ScriptureReference | null> {
-        try {
-            // Extract scripture reference from the detected text
-            const scriptureRef = this.toStudyUrl(detectionData.text);
+            for (const result of match.results) {
+                // ----------------------------------------------------------------------
+                // **注意：在實際應用中，我們需要 AssemblyAI 提供的字元索引來精確定位。
+                // 這裡我們假設 fullTranscript 是時間序列對齊的文本，並且使用簡易的 indexOf 模擬
+                // 由於我們不知道書名在 fullTranscript 中出現的精確字元位置，我們只能掃描。
+                // ----------------------------------------------------------------------
 
-            if (scriptureRef) {
-                // Log scripture detection for now (can be extended with event emitter later)
-                console.log('Scripture detected:', {
-                    originalText: detectionData.text,
-                    scriptureReference: scriptureRef,
-                    confidence: detectionData.confidence,
-                    timestamp: detectionData.timestamp || new Date().toISOString(),
-                    metadata: detectionData.metadata
-                });
+                // 掃描 fullTranscript 中所有該書名出現的位置 (可能重複，但我們需要所有上下文)
+                let index = -1;
+                do {
+                    index = fullTranscript.toLowerCase().indexOf(bookAlias.toLowerCase(), index + 1);
+                    if (index === -1) break;
 
-                return scriptureRef;
+                    const bookIndex = index;
+
+                    // 擷取書名出現前後的上下文
+                    const start = Math.max(0, bookIndex - contextWindow);
+                    const end = Math.min(fullTranscript.length, bookIndex + bookAlias.length + contextWindow);
+
+                    // 擷取的文字片段
+                    const contextText = fullTranscript.substring(start, end);
+
+                    // 使用 toStudyUrl 邏輯來解析上下文，並傳入原始的 contextText
+                    const reference = this.toStudyUrl(contextText, contextText);
+
+                    if (reference) {
+                        // 產生一個唯一的 key (Book Chapter:Verse[s] 或 Book Chapter[-Chapter])
+                        let uniqueKey = `${reference.book} ${reference.chapter}`;
+                        if (reference.endChapter) uniqueKey += `-${reference.endChapter}`;
+                        if (reference.verse) uniqueKey += `:${reference.verse}`;
+                        if (reference.endVerse) uniqueKey += `-${reference.endVerse}`;
+
+                        if (!processedReferences.has(uniqueKey)) {
+                            detectedReferences.push(reference);
+                            processedReferences.add(uniqueKey);
+                        }
+                    }
+                } while (index !== -1);
             }
-
-            return null;
-        } catch (error) {
-            console.error('Error processing scripture detection:', error);
-            return null;
         }
+
+        return detectedReferences;
     }
 
     /**
-     * Extract multiple scripture references from a text block
-     * Useful for processing longer transcripts that may contain multiple references
+     * 直接從一段文字中提取多個經文引用。（已更新為使用更強大的 toStudyUrl 邏輯）
      */
-    async extractScriptureReferences(text: string): Promise<ScriptureReference[]> {
+    public async extractScriptureReferences(text: string): Promise<ScriptureReference[]> {
         const references: ScriptureReference[] = [];
 
-        // Common scripture reference patterns
-        const patterns = [
-            // "Second Nephi Chapter 1 verse 1"
-            /([A-Za-z0-9\s]+)\s+Chapter\s+(\d+)\s+verse\s+(\d+)[\.\s]*/gi,
-            // "2 Nephi 1:1", "Alma 32:21", "Doctrine and Covenants 1:1" 
-            /([A-Za-z0-9\s]+)\s+(\d+):(\d+)/gi,
-            // "Genesis Chpater 1 to 3"
-            /([A-Za-z0-9\s]+)\s+Chapter\s+(\d+)\s+to\s+(\d+)[\.\s]*/gi,
-            // "Genesis Chapter 1 verse 1 to 3"
-            /([A-Za-z0-9\s]+)\s+Chapter\s+(\d+)\s+verse\s+(\d+)\s+to\s+(\d+)[\.\s]*/gi,
-            // "Genesis 1:1-3"
-            /([A-Za-z0-9\s]+)\s+(\d+):(\d+)-(\d+)[\.\s]*/gi,
-        ]; ``
+        // 整合所有經文引用格式的正則表達式
+        // \s* (?:chapter\s+|verse\s+|:|-) 是用來處理數字之間的連字符、冒號、逗號等
+        const complexReferenceRegex =
+            /([A-Za-z0-9\s]+)\s+([\d\w\s,:;.\-\'"]+)/gi; // 匹配書名後接任何可能的章節/節號組合
 
-        for (const pattern of patterns) {
-            let match;
-            while ((match = pattern.exec(text)) !== null) {
-                const fullMatch = match[0];
-                const scriptureRef = this.toStudyUrl(fullMatch);
+        let cleanText = this.convertWordsToNumbers(text);
+        let match;
+        const processedSpans = new Set<string>();
 
-                if (scriptureRef && !references.some(ref => ref.url === scriptureRef.url)) {
-                    references.push(scriptureRef);
-                }
+        while ((match = complexReferenceRegex.exec(cleanText)) !== null) {
+            const fullMatch = match[0];
+            const bookAlias = match[1].trim();
+
+            // 檢查書名是否有效
+            if (!this.findBookByAlias(bookAlias)) continue;
+
+            // 確保不處理重複的片段
+            if (processedSpans.has(fullMatch)) continue;
+            processedSpans.add(fullMatch);
+
+            // toStudyUrl 會嘗試解析 numbersAndSymbols
+            const scriptureRef = this.toStudyUrl(fullMatch, fullMatch);
+            if (scriptureRef) {
+                references.push(scriptureRef);
             }
         }
 
         return references;
     }
 
-    /**
-     * Validate scripture reference
-     */
-    validateScriptureReference(book: string, chapter: number, verse?: number): boolean {
-        const bookInfo = this.findBookByAlias(book);
-        if (!bookInfo) return false;
+    // 保持其他輔助函數不變...
+    public getAllBooks() {
+        return Object.values(this.scriptureDatabase);
+    }
 
-        if (!bookInfo.chapters.includes(chapter)) return false;
+    public searchBooks(query: string): ScriptureBook[] {
+        const normalizedQuery = query.toLowerCase().trim();
+        return Object.values(this.scriptureDatabase).filter(book =>
+            book.name.toLowerCase().includes(normalizedQuery) ||
+            book.aliases.some(alias => alias.toLowerCase().includes(normalizedQuery))
+        );
+    }
 
-        // Additional verse validation could be added here if needed
-        return true;
+    // 佔位符
+    public async processScriptureDetection(data: { text: string, confidence?: number, timestamp?: number, metadata: any }): Promise<any> {
+        // 這是您之前定義的佔位符邏輯
+        const result = this.toStudyUrl(data.text, data.text);
+        if (result) {
+            return { ...result, confidence: data.confidence, timestamp: data.timestamp };
+        }
     }
 }
