@@ -57,7 +57,7 @@ describe('StreamingGateway', () => {
       consoleSpy.mockRestore();
     });
 
-    it('should handle client disconnection with cleanup', () => {
+    it('should handle client disconnection with database save and cleanup', () => {
       const consoleSpy = jest.spyOn(console, 'log').mockImplementation();
       
       // Add a user transcript first
@@ -66,6 +66,7 @@ describe('StreamingGateway', () => {
         userId,
         data: { transcript: 'test' } as unknown as JSON,
         socket: mockSocket,
+        sessionId: 'session-123',
       });
       
       expect(gateway['userTranscriptList'].length).toBe(1);
@@ -99,6 +100,7 @@ describe('StreamingGateway', () => {
         expect(gateway['userTranscriptList'].length).toBe(1);
         expect(gateway['userTranscriptList'][0].userId).toBe(userId);
         expect(gateway['userTranscriptList'][0].socket).toBe(mockSocket);
+        expect(gateway['userTranscriptList'][0].sessionId).toBeUndefined();
         expect(eventEmitter.emit).toHaveBeenCalledWith('StartStreaming', { userId });
       });
 
@@ -138,6 +140,7 @@ describe('StreamingGateway', () => {
           userId,
           data: { transcript: 'test' } as unknown as JSON,
           socket: mockSocket,
+          sessionId: 'session-123',
         });
         
         await gateway.handleStreamingStop(data);
@@ -160,17 +163,25 @@ describe('StreamingGateway', () => {
 
   describe('AssemblyAI Event Handlers', () => {
     describe('Begin Event', () => {
-      it('should handle Begin event', () => {
-        const data = {
-          userId: 'user-123',
-          sessionId: 'session-456',
-          expiresAt: '2024-01-01T00:00:00Z',
-        };
+      it('should handle Begin event and set sessionId', () => {
+        const userId = 'user-123';
+        const sessionId = 'session-456';
+        const expiresAt = '2024-01-01T00:00:00Z';
         
+        // Add user transcript first
+        gateway['userTranscriptList'].push({
+          userId,
+          data: {} as JSON,
+          socket: mockSocket,
+          sessionId: undefined,
+        });
+        
+        const data = { userId, sessionId, expiresAt };
         gateway.createUserTranscript(data);
         
-        // Currently empty implementation, so just verify it doesn't throw
-        expect(() => gateway.createUserTranscript(data)).not.toThrow();
+        // Verify sessionId was set
+        const userTranscript = gateway['userTranscriptList'].find(ut => ut.userId === userId);
+        expect(userTranscript?.sessionId).toBe(sessionId);
       });
     });
 
@@ -237,8 +248,9 @@ describe('StreamingGateway', () => {
     });
 
     describe('Termination Event', () => {
-      it('should handle Termination event', () => {
+      it('should handle Termination event and send summary', async () => {
         const userId = 'user-123';
+        const sessionId = 'session-456';
         const data = { userId };
         
         // Add user transcript first
@@ -246,22 +258,29 @@ describe('StreamingGateway', () => {
           userId,
           data: { transcript: 'final transcript' } as unknown as JSON,
           socket: mockSocket,
+          sessionId: sessionId,
         });
         
-        gateway.saveUserTranscriptToDatabase(data);
+        // Mock axios for getFinalTranscript
+        const mockAxios = require('axios');
+        mockAxios.get = jest.fn().mockResolvedValue({
+          data: { text: 'Complete transcript text' }
+        });
         
-        // Verify the method was called (currently empty implementation)
-        expect(() => gateway.saveUserTranscriptToDatabase(data)).not.toThrow();
+        await gateway.saveUserTranscriptToDatabase(data);
+        
+        // Verify summary was sent to frontend
+        expect(mockSocket.emit).toHaveBeenCalledWith('Summary', 'This is a placeholder summary');
       });
 
-      it('should handle Termination event for non-existent user', () => {
+      it('should handle Termination event for non-existent user', async () => {
         const userId = 'non-existent-user';
         const data = { userId };
         
-        gateway.saveUserTranscriptToDatabase(data);
+        await gateway.saveUserTranscriptToDatabase(data);
         
-        // Should not throw
-        expect(() => gateway.saveUserTranscriptToDatabase(data)).not.toThrow();
+        // Should not throw and no socket emit
+        expect(mockSocket.emit).not.toHaveBeenCalled();
       });
     });
   });
@@ -321,7 +340,7 @@ describe('StreamingGateway', () => {
       expect(gateway['userTranscriptList'].length).toBe(0);
     });
 
-    it('should handle user disconnection cleanup', () => {
+    it('should handle user disconnection with database save', () => {
       const mockSocket2 = { ...mockSocket, id: 'socket-456' } as Socket;
       const user1 = 'user-1';
       const user2 = 'user-2';
@@ -329,13 +348,15 @@ describe('StreamingGateway', () => {
       // Add both users
       gateway['userTranscriptList'].push({
         userId: user1,
-        data: {} as JSON,
+        data: { transcript: 'user1 transcript' } as unknown as JSON,
         socket: mockSocket,
+        sessionId: 'session-1',
       });
       gateway['userTranscriptList'].push({
         userId: user2,
-        data: {} as JSON,
+        data: { transcript: 'user2 transcript' } as unknown as JSON,
         socket: mockSocket2,
+        sessionId: 'session-2',
       });
       
       expect(gateway['userTranscriptList'].length).toBe(2);

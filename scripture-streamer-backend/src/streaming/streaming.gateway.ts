@@ -9,7 +9,10 @@ interface UserTranscript {
     userId: string;
     data: JSON;
     socket: Socket;
+    sessionId?: string;
 }
+
+const PLACEHOLDER_SUMMARY = "This is a placeholder summary";
 
 @WebSocketGateway()
 export class StreamingGateway {
@@ -25,7 +28,7 @@ export class StreamingGateway {
     }
     
     handleDisconnect(client: Socket) {
-        // Store to database
+        // Save to database before cleanup
         const userTranscript = this.userTranscriptList.find(ut => ut.socket === client);
         if (userTranscript) {
             this.saveUserTranscript(userTranscript);
@@ -41,7 +44,7 @@ export class StreamingGateway {
     // Listen for events from frontend
     @SubscribeMessage('StartStreaming')
     async handleFrontendStart(client: Socket, data: { userId: string}) {
-        this.userTranscriptList.push({userId: data.userId, data: {} as JSON, socket: client});
+        this.userTranscriptList.push({userId: data.userId, data: {} as JSON, socket: client, sessionId: undefined});
         this.eventEmitter.emit('StartStreaming', {userId: data.userId});
     }
 
@@ -55,12 +58,6 @@ export class StreamingGateway {
         // Signal assemblyaiService to stop
         this.eventEmitter.emit('StopStreaming', {userId: data.userId});
 
-        // Save to database
-        const userTranscript = this.userTranscriptList.find(ut => ut.userId === data.userId);
-        if (userTranscript) {
-            this.saveUserTranscript(userTranscript);
-        }
-
         // Remove userTranscript from the list
         this.userTranscriptList = this.userTranscriptList.filter(ut => ut.userId !== data.userId);
     }
@@ -68,7 +65,10 @@ export class StreamingGateway {
     // Listen for events from AssemblyAiService
     @OnEvent('Begin')
     createUserTranscript(data: {userId: string, sessionId: string, expiresAt: string}) {
-        // if we end up caring about sessionId, this is where it should be updated
+        const userTranscript = this.userTranscriptList.find(ut => ut.userId === data.userId);
+        if (userTranscript) {
+            userTranscript.sessionId = data.sessionId;
+        }
     }
     
     @OnEvent('Turn')
@@ -84,11 +84,17 @@ export class StreamingGateway {
     
 
     @OnEvent('Termination')
-    saveUserTranscriptToDatabase(data: {userId: string}) {
-        // First save it to database
+    async saveUserTranscriptToDatabase(data: {userId: string}) {
         const userTranscript = this.userTranscriptList.find(userTranscript => userTranscript.userId === data.userId);
-        if (userTranscript) {
-            this.saveUserTranscript(userTranscript);
+        if (userTranscript && userTranscript.sessionId) {
+            // Get the complete, final transcript
+            const finalTranscript = await this.getFinalTranscript(userTranscript.sessionId);
+            
+            // Send to LLM Gateway for processing
+            // should call the function that sends the transcript to the LLM Gateway
+            
+            // Send summary to frontend (REMEBER TO REPLACE WITH THE ACTUAL SUMMARY)
+            userTranscript.socket.emit('Summary', PLACEHOLDER_SUMMARY);
         }
     }
 
