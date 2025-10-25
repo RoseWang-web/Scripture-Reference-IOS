@@ -14,7 +14,16 @@ interface UserTranscript {
 
 const PLACEHOLDER_SUMMARY = "This is a placeholder summary";
 
-@WebSocketGateway()
+@WebSocketGateway({
+  cors: {
+    origin: '*',
+    credentials: true,
+  },
+  transports: ['websocket', 'polling'],
+  allowEIO3: true,
+  pingTimeout: 60000,
+  pingInterval: 25000,
+})
 export class StreamingGateway {
     private userTranscriptList: UserTranscript[];
 
@@ -24,33 +33,44 @@ export class StreamingGateway {
 
     handleConnection(client: Socket) {
         // Just log that someone connected
-        console.log(`Client connected`);
+        console.log(`Client connected: ${client.id}`);
+        console.log(`Client IP: ${client.handshake.address}`);
+        console.log(`Client headers:`, client.handshake.headers);
     }
     
     handleDisconnect(client: Socket) {
+        console.log(`Client disconnected: ${client.id}`);
         // Save to database before cleanup
         const userTranscript = this.userTranscriptList.find(ut => ut.socket === client);
         if (userTranscript) {
+            console.log(`Saving transcript for user: ${userTranscript.userId}`);
             this.saveUserTranscript(userTranscript);
         }
 
         // Remove userTranscript from the list
         this.userTranscriptList = this.userTranscriptList.filter(ut => ut.socket !== client);
-
-        // Just log that someone disconnected  
-        console.log(`Client disconnected`);
+        console.log(`Remaining connections: ${this.userTranscriptList.length}`);
     }
 
     // Listen for events from frontend
     @SubscribeMessage('StartStreaming')
     async handleFrontendStart(client: Socket, data: { userId: string}) {
+        console.log(`StartStreaming received for user: ${data.userId}`);
         this.userTranscriptList.push({userId: data.userId, data: {} as JSON, socket: client, sessionId: undefined});
         this.eventEmitter.emit('StartStreaming', {userId: data.userId});
     }
 
     @SubscribeMessage('SendAudioBuffer')
-    async handleFrontendAudioBuffer(data: { userId: string, audioBuffer: Buffer }) {
-        this.sendAudioBuffer(data.userId, data.audioBuffer);
+    async handleFrontendAudioBuffer(client: Socket, data: Buffer) {
+        console.log(`SendAudioBuffer received for user: ${client.id}`);
+        // Find the user for this socket
+        const userTranscript = this.userTranscriptList.find(ut => ut.socket === client);
+        if (userTranscript) {
+            console.log(`Audio data received for user: ${userTranscript.userId}, size: ${data.length} bytes`);
+            this.eventEmitter.emit('SendAudioBuffer', {userId: userTranscript.userId, audioBuffer: data});
+        } else {
+            console.log(`Audio data received but no user found for socket`);
+        }
     }
 
     @SubscribeMessage('StopStreaming')
