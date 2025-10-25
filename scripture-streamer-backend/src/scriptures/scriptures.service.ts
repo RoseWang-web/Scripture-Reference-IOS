@@ -796,24 +796,31 @@ export class ScripturesService {
         if (!alias) return null;
 
         // Normalize the alias for consistent lookup
-        const normalizedAlias = alias.toLowerCase().trim();
+        const normalizedAlias = this.normalizeForLookup(alias);
 
         // Direct lookup by name (key)
-        const directMatch = this.scriptureDatabase[normalizedAlias];
-        if (directMatch) {
-            return directMatch;
+        // 嘗試透過標準化後的主鍵進行直接查詢
+        // 注意：這裡我們假設資料庫的鍵也是標準化的（或至少可以透過標準化輸入匹配）。
+        // 由於原始資料庫鍵包含空格 ('1 nephi')，我們需要先標準化資料庫鍵再查找
+        for (const key in this.scriptureDatabase) {
+            if (this.normalizeForLookup(key) === normalizedAlias) {
+                return this.scriptureDatabase[key];
+            }
         }
 
         // Search through aliases
+        // 3. 遍歷所有書目並檢查其 aliases 陣列
         for (const key in this.scriptureDatabase) {
             const book = this.scriptureDatabase[key];
+
             // 對於每本書，檢查它的所有別名中是否有與標準化後的輸入匹配的項目
-            const aliasMatch = book.aliases.some(a => a.toLowerCase() === normalizedAlias);
+            const aliasMatch = book.aliases.some(a => this.normalizeForLookup(a) === normalizedAlias);
 
             if (aliasMatch) {
                 return book;
             }
         }
+
         return null;
     }
     /**
@@ -857,7 +864,7 @@ export class ScripturesService {
         return Array.from(aliases);
     }
     /**
-     * 
+     * Converts a scripture key string (e.g., "2 Nephi 1:1-3") into a ScriptureReference object and URL.
      * 
      * 
      *  
@@ -1072,6 +1079,73 @@ export class ScripturesService {
 
         return references;
     }
+    /**
+     * 【新功能】處理 AssemblyAI 轉錄稿中的 word_search_matches
+     * 提取與經文書名或別名匹配的詞彙及其時間戳記。
+     * * @param transcript 完整的 AssemblyAI 轉錄稿物件。
+     * @returns 帶有時間戳記的經文引用列表。
+     */
+    public processAssemblyAITranscriptForScriptures(transcript: AssemblyAITranscript): TimedScriptureReference[] {
+        const timedReferences: TimedScriptureReference[] = [];
+        const matchedBookNames = new Set<string>();
+
+        // 1. 收集所有可能的書名和別名 (正規化後)
+        const allNormalizedAliases: string[] = [];
+        Object.values(this.scriptureDatabase).forEach(book => {
+            allNormalizedAliases.push(this.normalizeForLookup(book.name));
+            book.aliases.forEach(alias => allNormalizedAliases.push(this.normalizeForLookup(alias)));
+        });
+
+        // 2. 處理 word_search_matches 列表
+        for (const match of transcript.word_search_matches) {
+            const normalizedText = this.normalizeForLookup(match.text);
+
+            // 檢查這個單詞是否是有效的經文書名或別名
+            if (this.findBookByAlias(match.text)) {
+                // 如果是有效的書名/別名，我們就有了時間戳記
+
+                // 注意：AssemblyAI 的 word_search 提供了單詞在音訊中出現的所有時間戳記
+                // 我們假設每個匹配結果都是一次獨立的引用。
+
+                // 為了簡化，這裡我們只處理單詞匹配。要處理完整的 "Alma 32:21" 引用，
+                // 你需要在 `StreamingGateway` 中將所有可能的引用 (如 "Alma thirty-two twenty-one") 作為自定義關鍵詞傳遞。
+
+                // 假設我們在 word_search 中搜索了所有經文書名和別名，
+                // 並且 AssemblyAI 返回了這些詞彙在轉錄稿中的位置。
+
+                // 由於我們只匹配單詞，所以我們不能在這裡直接建立完整的 ScriptureReference。
+                // 更好的做法是：使用這個時間戳記作為參考，然後從該時間點附近的文本中提取完整的引用。
+
+                // 由於我們無法存取轉錄稿中詞彙周圍的上下文，這裡只能標記書名出現的時間。
+                // 為了滿足 TimedScriptureReference 介面的要求，我們只能返回一個不完整的引用（缺少 chapter/verse）。
+                // 但如果我們知道這是 AssemblyAI 轉錄，我們可以將其視為一個完整的引用偵測。
+
+                // 由於我們不知道上下文，我們將假設這是對應書本的總體提及。
+
+                for (const result of match.results) {
+                    // 為了避免重複，我們需要一個獨特的識別碼 (normalizedText + start)
+                    const uniqueKey = `${normalizedText}-${result.start}`;
+                    if (matchedBookNames.has(uniqueKey)) continue;
+                    matchedBookNames.add(uniqueKey);
+
+                    const book = this.findBookByAlias(match.text);
+                    if (book) {
+                        timedReferences.push({
+                            book: book.name,
+                            chapter: 1, // 由於無法確定，使用預設值 1
+                            url: `https://www.churchofjesuschrist.org/study/scriptures/${book.path}?lang=eng`,
+                            originalText: match.text,
+                            startMs: result.start,
+                            endMs: result.end,
+                        });
+                    }
+                }
+            }
+        }
+
+        return timedReferences;
+    }
+
 
     // 保持其他輔助函數不變...
     public getAllBooks() {
@@ -1089,9 +1163,16 @@ export class ScripturesService {
     // 佔位符
     public async processScriptureDetection(data: { text: string, confidence?: number, timestamp?: number, metadata: any }): Promise<any> {
         // 這是您之前定義的佔位符邏輯
-        const result = this.toStudyUrl(data.text, data.text);
-        if (result) {
-            return { ...result, confidence: data.confidence, timestamp: data.timestamp };
+        console.log('Processing detection DTO:', data);
+
+        // 這裡可以呼叫 extractScriptureReferences 或其他邏輯
+        const references = await this.extractScriptureReferences(data.text);
+
+        if (references.length > 0) {
+            // 返回第一個檢測到的引用
+            return references[0];
         }
+
+        return null;
     }
 }
