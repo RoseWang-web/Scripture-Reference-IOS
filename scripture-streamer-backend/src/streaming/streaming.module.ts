@@ -6,4 +6,4 @@ import { StreamingGateway } from './streaming.gateway';
   providers: [StreamingGateway],
   exports: [StreamingGateway],
 })
-export class AssemblyAiModule {}
+export class StreamingModule {}
