@@ -2,6 +2,8 @@ import { Injectable } from "@nestjs/common";
 import { WebSocket } from 'ws';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import * as querystring from 'querystring';
+import { Readable, PassThrough } from 'stream';
+import ffmpeg from 'fluent-ffmpeg';
 
 interface ConnectionParams {
     sample_rate: number;
@@ -23,8 +25,10 @@ export class AssemblyAiService {
     }>;
 
     constructor(private readonly eventEmitter: EventEmitter2) {
-        this.assemblyAiApiKey = process.env.ASSEMBLY_AI_API_KEY ?? '';
-        this.endpoint = process.env.ASSEMBLY_AI_ENDPOINT ?? '';
+        // this.assemblyAiApiKey = process.env.ASSEMBLY_AI_API_KEY ?? '';
+        this.assemblyAiApiKey = '37a6ed35c49c439b8dd1354c18e858e3';
+        // this.endpoint = process.env.ASSEMBLY_AI_ENDPOINT ?? '';
+        this.endpoint = 'wss://streaming.assemblyai.com/v3/ws';
         this.userSession = new Map();
     }
 
@@ -37,7 +41,11 @@ export class AssemblyAiService {
 
     @OnEvent('SendAudioBuffer')
     async handleAudioFromGateway(data: { userId: string, audioBuffer: Buffer }) {
-        this.sendAudioBuffer(data.userId, data.audioBuffer);
+        // Convert to PCM16 before sending
+        const pcm16Buffer = await this.convertToPCM16(data.audioBuffer);
+        if (pcm16Buffer) {
+            this.sendAudioBuffer(data.userId, pcm16Buffer);
+        }
     }
 
     @OnEvent('StopStreaming')
@@ -161,4 +169,44 @@ export class AssemblyAiService {
             throw new Error('Failed to generate temporary token');
         }
     }
+
+    private async convertToPCM16(audioBuffer: Buffer): Promise<Buffer | null> {
+        return new Promise((resolve, reject) => {
+          const inputStream = new Readable();
+          inputStream.push(audioBuffer);
+          inputStream.push(null);
+    
+          const outputStream = new PassThrough();
+          const chunks: Buffer[] = [];
+    
+          outputStream.on('data', (chunk) => {
+            chunks.push(chunk);
+          });
+    
+          outputStream.on('end', () => {
+            const result = Buffer.concat(chunks);
+            resolve(result);
+          });
+    
+          outputStream.on('error', (error) => {
+            console.error('Output stream error:', error);
+            resolve(null);
+          });
+    
+          ffmpeg(inputStream)
+            .inputFormat('auto') // Auto-detect input format
+            .audioCodec('pcm_s16le') // PCM 16-bit little-endian
+            .audioFrequency(16000) // 16kHz sample rate
+            .audioChannels(1) // Mono
+            .format('s16le') // Raw PCM format
+            .on('error', (error) => {
+              console.error('FFmpeg conversion error:', error);
+              resolve(null);
+            })
+            .on('end', () => {
+              console.log('Audio conversion completed');
+            })
+            .pipe(outputStream, { end: true });
+        });
+      }
 }
