@@ -3,6 +3,7 @@ import { OnEvent } from '@nestjs/event-emitter';
 import { SubscribeMessage, WebSocketGateway, OnGatewayConnection, OnGatewayDisconnect } from "@nestjs/websockets";
 import { Socket } from 'socket.io';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import axios from "axios";
 
 interface UserTranscript {
     userId: string;
@@ -97,5 +98,17 @@ export class StreamingGateway {
 
     private saveUserTranscript(userTranscript: UserTranscript) {
         // This would be calling datbaseService
+    }
+
+    private async getFinalTranscript(sessionId: string) {
+        const response = await axios.get(
+            `https://api.assemblyai.com/v2/transcript/${sessionId}`,
+            {
+                headers: {
+                    authorization: process.env.ASSEMBLY_AI_API_KEY
+                }
+            }
+        );
+        return response.data;
     }
 }
