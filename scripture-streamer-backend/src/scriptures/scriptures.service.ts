@@ -720,10 +720,8 @@ export class ScriptureService {
                 verse = match[3];
             }
 
-
-
-            return null; // tempo
-
-
         }
+        return null; // tempo
+
     }
+}
