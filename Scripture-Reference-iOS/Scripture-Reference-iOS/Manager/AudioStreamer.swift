@@ -4,10 +4,25 @@
 //
 //  Created by Simon Sung on 10/24/25.
 //
-
 import Foundation
 import Combine
 import AVFoundation
+
+// Scripture reference model matching backend structure
+struct ScriptureReference: Codable, Identifiable {
+    let id = UUID()
+    let book: String
+    let chapter: Int
+    let verse: Int?
+    let endVerse: Int?
+    let endChapter: Int?
+    let url: String
+    let originalText: String
+    
+    enum CodingKeys: String, CodingKey {
+        case book, chapter, verse, endVerse, endChapter, url, originalText
+    }
+}
 
 class AudioStreamer: ObservableObject {
     private var webSocket: URLSessionWebSocketTask?
@@ -28,6 +43,7 @@ class AudioStreamer: ObservableObject {
     @Published var transcript = ""
     @Published var summary = ""
     @Published var connectionError: String?
+    @Published var scriptureReferences: [ScriptureReference] = []
     @Published var isRecordingAudio = false
     
     // Socket.IO protocol constants
@@ -36,14 +52,14 @@ class AudioStreamer: ObservableObject {
     
     func start() {
         print("Starting WebSocket connection...")
-        print("💡 If connection fails, try using your computer's IP address instead of localhost")
-        print("💡 Find your IP with: ifconfig | grep 'inet ' | grep -v 127.0.0.1")
-        print("💡 Current host: 127.0.0.1:3000")
+        print("If connection fails, try using your computer's IP address instead of localhost")
+        print("Find your IP with: ifconfig | grep 'inet ' | grep -v 127.0.0.1")
+        print("Current host: 127.0.0.1:3000")
         connectWebSocket()
     }
     
     func startWithAudio() {
-        print("🎤 Starting WebSocket connection with audio recording...")
+        print("Starting WebSocket connection with audio recording...")
         
         // Don't clear transcript - keep building across sessions
         
@@ -51,7 +67,7 @@ class AudioStreamer: ObservableObject {
         
         // Start audio recording after connection is established
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-            print("🎤 Starting audio recording...")
+            print("Starting audio recording...")
             self.startAudioRecording()
         }
     }
@@ -59,6 +75,7 @@ class AudioStreamer: ObservableObject {
     func clearTranscript() {
         DispatchQueue.main.async {
             self.transcript = ""
+            self.scriptureReferences = []
         }
     }
     
@@ -72,7 +89,8 @@ class AudioStreamer: ObservableObject {
         // Option 1: Try 127.0.0.1 instead of localhost
         // Option 2: Use your computer's actual IP address
         let host = "127.0.0.1" // Try this first, then your computer's IP if it doesn't work
-        let port = "3000"
+//		let host = "10.244.48.190"
+		let port = "3000"
         
         // Try a simple WebSocket connection without Socket.IO protocol
         if let url = URL(string: "ws://\(host):\(port)/socket.io/?EIO=\(socketIOVersion)&transport=websocket") {
@@ -93,7 +111,6 @@ class AudioStreamer: ObservableObject {
     
     private func handleSocketIOHandshake() {
         // Socket.IO handshake: send "40" to join default namespace
-        print("🔌 Sending Socket.IO handshake...")
         sendSocketIOMessage("40")
     }
     
@@ -104,21 +121,16 @@ class AudioStreamer: ObservableObject {
     
     private func sendSocketIOMessage(_ message: String) {
         guard let webSocket = webSocket else {
-            print("❌ Cannot send message: WebSocket is nil")
+            print("Cannot send message: WebSocket is nil")
             return
         }
         
         // Send message - WebSocket will handle connection state internally
         webSocket.send(.string(message)) { error in
             if let error = error {
-                print("❌ WebSocket send error: \(error)")
+                print("WebSocket send error: \(error)")
                 DispatchQueue.main.async {
                     self.connectionError = "Send failed: \(error.localizedDescription)"
-                }
-            } else {
-                // Only log non-audio messages to reduce spam
-                if !message.contains("SendAudioBuffer") {
-                    print("✅ Socket.IO message sent: \(message)")
                 }
             }
         }
@@ -142,8 +154,6 @@ class AudioStreamer: ObservableObject {
         // Simple WebSocket emit: just send the event name and data
         let message = "42[\"SendAudioBuffer\",\"\(base64Audio)\"]"
         sendSocketIOMessage(message)
-        
-        print("📤 Sent SendAudioBuffer: \(base64Audio.count) base64 characters")
     }
     
     func stopStreaming() {
@@ -168,7 +178,6 @@ class AudioStreamer: ObservableObject {
     // MARK: - Audio Recording Methods (Beautiful streaming like your friend's code!)
     
     func startAudioRecording() {
-        print("🎤 startAudioRecording - beautiful streaming audio!")
         stopAudioRecording() // Clean stop first
         
         // Set up audio session
@@ -177,10 +186,7 @@ class AudioStreamer: ObservableObject {
             try session.setCategory(.record, mode: .default)
             try session.setActive(true)
         } catch {
-            print("❌ Failed to set up AVAudioSession: \(error)")
-            DispatchQueue.main.async {
-                self.connectionError = "Audio session failed: \(error.localizedDescription)"
-            }
+            print("Failed to set up AVAudioSession: \(error)")
             return
         }
         
@@ -189,17 +195,13 @@ class AudioStreamer: ObservableObject {
         let input = engine.inputNode
         let format = input.inputFormat(forBus: 0)
         
-        print("📊 Input format: \(format)")
+        print("Input format: \(format)")
         
         // Start the engine
         do {
             try engine.start()
-            print("✅ AVAudioEngine started for streaming!")
         } catch {
-            print("❌ Failed to start AVAudioEngine: \(error)")
-            DispatchQueue.main.async {
-                self.connectionError = "Audio engine failed: \(error.localizedDescription)"
-            }
+            print("Failed to start AVAudioEngine: \(error)")
             return
         }
         
@@ -207,11 +209,8 @@ class AudioStreamer: ObservableObject {
         input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
             guard let self = self else { return }
             
-            print("🎤 Captured buffer with \(buffer.frameLength) frames")
-            
             // Convert buffer to PCM16 mono 16kHz (what AssemblyAI needs)
             if let audioData = self.convertBufferToPCM16Mono16k(buffer: buffer, inputFormat: format) {
-                print("📤 Sending \(audioData.count) bytes to backend")
                 self.sendAudioBuffer(audioData)
             }
         }
@@ -225,13 +224,9 @@ class AudioStreamer: ObservableObject {
         DispatchQueue.main.async {
             self.isRecordingAudio = true
         }
-        
-        print("✅ Audio recording started successfully!")
     }
     
     func stopAudioRecording() {
-        print("🎤 Stopping audio recording...")
-        
         if let input = inputNode {
             input.removeTap(onBus: 0)
         }
@@ -246,8 +241,6 @@ class AudioStreamer: ObservableObject {
         DispatchQueue.main.async {
             self.isRecordingAudio = false
         }
-        
-        print("✅ Audio recording stopped")
     }
     
     // Convert audio buffer to PCM16 mono 16kHz (what AssemblyAI needs)
@@ -420,16 +413,53 @@ class AudioStreamer: ObservableObject {
         switch eventName {
         case "connection":
             // Handle connection confirmation
-            if let connectionData = eventPayload as? [String: Any],
-               let message = connectionData["message"] as? String {
-                print("✅ Backend connection confirmed: \(message)")
-            }
+            break
         case "Turn":
             // Handle transcript update
-            print("📨 Turn event received, payload: \(eventPayload)")
             if let transcriptData = eventPayload as? [String: Any],
                let text = transcriptData["transcript"] as? String,
                let isFormatted = transcriptData["turn_is_formatted"] as? Bool {
+                
+                // Parse scripture references if present
+                if let scriptureRefsData = transcriptData["scriptureReferences"] as? [[String: Any]] {
+                    let refs = scriptureRefsData.compactMap { refDict -> ScriptureReference? in
+                        guard let book = refDict["book"] as? String,
+                              let chapter = refDict["chapter"] as? Int,
+                              let originalText = refDict["originalText"] as? String else {
+                            return nil
+                        }
+                        
+                        // Build URL on frontend
+                        let url = self.buildScriptureURL(
+                            book: book,
+                            chapter: chapter,
+                            verse: refDict["verse"] as? Int,
+                            endVerse: refDict["endVerse"] as? Int
+                        )
+                        
+                        return ScriptureReference(
+                            book: book,
+                            chapter: chapter,
+                            verse: refDict["verse"] as? Int,
+                            endVerse: refDict["endVerse"] as? Int,
+                            endChapter: refDict["endChapter"] as? Int,
+                            url: url,
+                            originalText: originalText
+                        )
+                    }
+                    
+                    if !refs.isEmpty {
+                        DispatchQueue.main.async {
+                            // Deduplicate by URL to avoid showing same scripture multiple times
+                            let existingURLs = Set(self.scriptureReferences.map { $0.url })
+                            let newRefs = refs.filter { !existingURLs.contains($0.url) }
+                            
+                            if !newRefs.isEmpty {
+                                self.scriptureReferences.append(contentsOf: newRefs)
+                            }
+                        }
+                    }
+                }
                 
                 // Only append when turn is formatted (completed sentence)
                 if isFormatted && !text.isEmpty {
@@ -441,12 +471,7 @@ class AudioStreamer: ObservableObject {
                             self.transcript = text
                         }
                     }
-                    print("✅ Appended formatted transcript: \(text)")
-                } else {
-                    print("🔄 Skipping unformatted transcript: \(text)")
                 }
-            } else {
-                print("❌ Failed to parse Turn event payload")
             }
         case "Summary":
             // Handle summary
@@ -458,16 +483,55 @@ class AudioStreamer: ObservableObject {
             }
         case "StreamingStopped":
             // Handle streaming stopped confirmation
-            if let stoppedData = eventPayload as? [String: Any],
-               let message = stoppedData["message"] as? String {
-                print("✅ Streaming stopped: \(message)")
-                if let finalTranscript = stoppedData["finalTranscript"] as? [String: Any],
-                   let text = finalTranscript["transcript"] as? String {
-                    print("📝 Final transcript: \(text)")
-                }
-            }
+            break
         default:
-            print("❓ Unknown Socket.IO event: \(eventName), payload: \(eventPayload)")
+            break
         }
+    }
+    
+    // Build Church of Jesus Christ scripture URL
+    private func buildScriptureURL(book: String, chapter: Int, verse: Int?, endVerse: Int?) -> String {
+        // Map book names to URL paths
+        let bookPath: String
+        switch book.lowercased() {
+        // Book of Mormon
+        case "1 nephi": bookPath = "bofm/1-ne"
+        case "2 nephi": bookPath = "bofm/2-ne"
+        case "jacob": bookPath = "bofm/jacob"
+        case "enos": bookPath = "bofm/enos"
+        case "jarom": bookPath = "bofm/jarom"
+        case "omni": bookPath = "bofm/omni"
+        case "words of mormon": bookPath = "bofm/w-of-m"
+        case "mosiah": bookPath = "bofm/mosiah"
+        case "alma": bookPath = "bofm/alma"
+        case "helaman": bookPath = "bofm/hel"
+        case "3 nephi": bookPath = "bofm/3-ne"
+        case "4 nephi": bookPath = "bofm/4-ne"
+        case "mormon": bookPath = "bofm/morm"
+        case "ether": bookPath = "bofm/ether"
+        case "moroni": bookPath = "bofm/moro"
+        // Doctrine and Covenants
+        case "doctrine and covenants", "d&c", "d and c": bookPath = "dc-testament/dc"
+        // Pearl of Great Price
+        case "moses": bookPath = "pgp/moses"
+        case "abraham": bookPath = "pgp/abr"
+        case "joseph smith—matthew": bookPath = "pgp/js-m"
+        case "joseph smith—history": bookPath = "pgp/js-h"
+        case "articles of faith": bookPath = "pgp/a-of-f"
+        default:
+            // Fallback: convert to lowercase and replace spaces with hyphens
+            bookPath = "bofm/" + book.lowercased().replacingOccurrences(of: " ", with: "-")
+        }
+        
+        // Build URL fragment
+        var urlFragment = "\(chapter)"
+        if let verse = verse {
+            urlFragment += ".\(verse)"
+            if let endVerse = endVerse, endVerse != verse {
+                urlFragment += "-\(endVerse)"
+            }
+        }
+        
+        return "https://www.churchofjesuschrist.org/study/scriptures/\(bookPath)/\(urlFragment)?lang=eng"
     }
 }

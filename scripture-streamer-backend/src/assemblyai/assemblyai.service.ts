@@ -3,11 +3,39 @@ import { WebSocket } from 'ws';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import * as querystring from 'querystring';
 
+// Custom Vocabulary for scripture names and terms
+const SCRIPTURE_VOCABULARY: string[] = [
+    // Book of Mormon
+    "Book of Mormon", "1 Nephi", "First Nephi", "2 Nephi", "Second Nephi",
+    "Jacob", "Enos", "Jarom", "Omni", "Words of Mormon",
+    "Mosiah", "Alma", "Helaman", 
+    "3 Nephi", "Third Nephi", "4 Nephi", "Fourth Nephi",
+    "Mormon", "Ether", "Moroni",
+    // Doctrine and Covenants
+    "Doctrine and Covenants", "D and C",
+    // Pearl of Great Price
+    "Pearl of Great Price", "Book of Moses", "Book of Abraham",
+    "Joseph Smith Matthew", "Joseph Smith History", "Articles of Faith",
+    // Bible books
+    "Genesis", "Exodus", "Leviticus", "Numbers", "Deuteronomy",
+    "Joshua", "Judges", "Ruth", "Samuel", "Kings", "Chronicles",
+    "Psalms", "Proverbs", "Isaiah", "Jeremiah", "Ezekiel", "Daniel",
+    "Matthew", "Mark", "Luke", "John", "Acts", "Romans",
+    "Corinthians", "Galatians", "Ephesians", "Philippians",
+    "Colossians", "Thessalonians", "Timothy", "Titus",
+    "Hebrews", "James", "Peter", "Jude", "Revelation",
+    // Common terms
+    "Chapter", "Verse", "Section", "Testament",
+    // Names and places
+    "Nephi", "Lehi", "Laman", "Lemuel", "Zarahemla"
+];
+
 interface ConnectionParams {
     sample_rate: number;
     format_turns: boolean;
     encoding: string;
     token: string;
+    word_boost?: string[];
 }
 
 @Injectable()
@@ -23,8 +51,13 @@ export class AssemblyAiService {
     }>;
 
     constructor(private readonly eventEmitter: EventEmitter2) {
-        // this.assemblyAiApiKey = process.env.ASSEMBLY_AI_API_KEY ?? '';
-        this.assemblyAiApiKey = '37a6ed35c49c439b8dd1354c18e858e3';
+        // Support both ASSEMBLYAI_API_KEY and ASSEMBLY_AI_API_KEY
+        this.assemblyAiApiKey = process.env.ASSEMBLYAI_API_KEY || process.env.ASSEMBLY_AI_API_KEY || '';
+        if (!this.assemblyAiApiKey) {
+            console.error('❌ ASSEMBLYAI_API_KEY not set - streaming will not work!');
+        } else {
+            console.log('✅ AssemblyAI API key loaded:', this.assemblyAiApiKey.substring(0, 10) + '...');
+        }
         // this.endpoint = process.env.ASSEMBLY_AI_ENDPOINT ?? '';
         this.endpoint = 'wss://streaming.assemblyai.com/v3/ws';
         this.userSession = new Map();
@@ -54,69 +87,76 @@ export class AssemblyAiService {
     private setupEventHandlers(userId: string, ws: WebSocket) {
         // Setup WebSocket event handlers
         ws.on("open", () => {
-            console.log(`✅ WebSocket connection opened to AssemblyAI: ${this.endpoint}`);
+            console.log(`Connected to AssemblyAI`);
         });
         ws.on("message", (message) => {
             try {
-            const data = JSON.parse(message.toString());
-            const msgType = data.type;
-            console.log(`📨 AssemblyAI message type: ${msgType}`);
-            if (msgType === "Begin") {
-                const sessionId = data.id;
-                const expiresAt = data.expires_at;
-                const session = this.userSession.get(userId);
-                if (session) {
-                    session.sessionId = sessionId;
+                const data = JSON.parse(message.toString());
+                const msgType = data.type;
+                
+                // 🚀 OPTIMIZATION: Use switch for faster branching + reduced logging
+                switch (msgType) {
+                    case "Begin":
+                        const session = this.userSession.get(userId);
+                        if (session) {
+                            session.sessionId = data.id;
+                        }
+                        this.eventEmitter.emit('Begin', {
+                            userId, 
+                            sessionId: data.id, 
+                            expiresAt: data.expires_at
+                        });
+                        break;
+                        
+                    case "Turn":
+                        // Only log formatted transcripts
+                        if (data.turn_is_formatted && data.transcript) {
+                            console.log(`Transcript: "${data.transcript}"`);
+                        }
+                        this.eventEmitter.emit('Turn', { userId, data });
+                        break;
+                        
+                    case "Termination":
+                        const userSession = this.userSession.get(userId);
+                        this.eventEmitter.emit('Termination', {
+                            userId,
+                            sessionId: userSession?.sessionId || '',
+                            audioDuration: data.audio_duration_seconds,
+                            sessionDuration: data.session_duration_seconds
+                        });
+                        break;
+                        
+                    case "Error":
+                        console.error(`AssemblyAI Error:`, data);
+                        break;
                 }
-                console.log(`✅ AssemblyAI session started: ${sessionId}`);
-                this.eventEmitter.emit('Begin', {'userId': userId, 'sessionId': sessionId, 'expiresAt': expiresAt});
-            } else if (msgType === "Turn") {
-                const transcript = data.transcript || "";
-                const formatted = data.turn_is_formatted;
-                const session = this.userSession.get(userId);
-                console.log(`📝 Transcript received: ${transcript}`);
-                this.eventEmitter.emit('Turn', {'userId': userId, 'data': data});
-            } else if (msgType === "Termination") {
-                const audioDuration = data.audio_duration_seconds;
-                const sessionDuration = data.session_duration_seconds;
-                const session = this.userSession.get(userId);
-                this.eventEmitter.emit('Termination', {'userId': userId, 'sessionId': session?.sessionId || '', 'audioDuration': audioDuration, 'sessionDuration': sessionDuration});
-            } else if (msgType === "Error") {
-                console.error(`❌ AssemblyAI Error:`, data);
-            }
             } catch (error) {
-            console.error(`❌ Error parsing AssemblyAI message:`, error);
-            this.eventEmitter.emit('Error', {userId: userId, error: error});
+                console.error(`Error parsing message:`, error);
+                this.eventEmitter.emit('Error', { userId, error });
             }
         });
         ws.on("error", (error) => {
-            console.error(`❌ AssemblyAI WebSocket error for user ${userId}:`, error);
+            console.error(`AssemblyAI error:`, error);
             this.eventEmitter.emit('WebSocketError', {userId: userId, error:error});
         });
         ws.on("close", (code, reason) => {
-            console.log(`🔌 AssemblyAI WebSocket closed for user ${userId}. Code: ${code}, Reason: ${reason.toString()}`);
+            console.log(`AssemblyAI closed. Code: ${code}`);
             this.eventEmitter.emit('WebSocketDisconnected', {userId: userId, status: code, Msg: reason})
         });
     }
 
     /**
-     * Send audio data to AssemblyAI
+     * 🚀 OPTIMIZED: Send audio data to AssemblyAI with minimal logging
      */
-    async sendAudioBuffer(userId: string,audioBuffer: Buffer) {
+    async sendAudioBuffer(userId: string, audioBuffer: Buffer) {
         const session = this.userSession.get(userId);
-        console.log('📊 Session exists:', !!session);
-        if (session) {
-            console.log('📊 WS exists:', !!session.ws);
-            console.log('📊 WS readyState:', session.ws?.readyState);
-            console.log('📊 WS OPEN constant:', WebSocket.OPEN);
-            console.log('📊 stopRequested:', session.stopRequested);
-        }
-        if (session && session.ws.readyState === WebSocket.OPEN && !session.stopRequested) {
+        
+        // 🚀 OPTIMIZATION: Fast path - check conditions in order of likelihood
+        if (session?.ws?.readyState === WebSocket.OPEN && !session.stopRequested) {
             session.ws.send(audioBuffer);
-            console.log('✅ 真的发送了音频数据到AssemblyAI! Buffer size:', audioBuffer.length);
-        } else {
-            console.log('❌ Cannot send audio - connection not ready');
+            // Removed excessive logging for performance
         }
+        // Only log errors, not every send
     }
 
     /**
@@ -128,6 +168,7 @@ export class AssemblyAiService {
             format_turns: true,
             encoding: 'pcm_s16le', // PCM signed 16-bit little-endian
             token: tempToken,
+            word_boost: SCRIPTURE_VOCABULARY, // Custom vocabulary for scripture names
         };
 
         const userWs = new WebSocket(`${this.endpoint}?${querystring.stringify(userConnectionParams as any)}`);
@@ -150,13 +191,12 @@ export class AssemblyAiService {
 
             userWs.on('open', () => {
                 clearTimeout(timeout);
-                console.log(`✅ AssemblyAI WebSocket ready for user: ${userId}`);
                 resolve();
             });
 
             userWs.on('error', (error) => {
                 clearTimeout(timeout);
-                console.error(`❌ AssemblyAI WebSocket error for user ${userId}:`, error);
+                console.error(`AssemblyAI connection error:`, error);
                 reject(error);
             });
         });
@@ -192,12 +232,16 @@ export class AssemblyAiService {
             });
 
             if (!response.ok) {
+                const errorText = await response.text();
+                console.error(`❌ AssemblyAI token generation failed: ${response.status} ${response.statusText}`);
+                console.error(`❌ Response body:`, errorText);
                 throw new Error(`Failed to generate token: ${response.status} ${response.statusText}`);
             }
 
             const data = await response.json();
             return data.token;
         } catch (error) {
+            console.error(`❌ Error in generateTemporaryToken:`, error);
             throw new Error('Failed to generate temporary token');
         }
     }

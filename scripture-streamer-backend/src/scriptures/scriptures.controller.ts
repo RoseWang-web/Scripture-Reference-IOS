@@ -1,7 +1,6 @@
-// import { Controller } from '@nestjs/common';
-// import { ScripturesService } from './scriptures.service';
+import { Controller } from '@nestjs/common';
 
-// @Controller('scriptures')
-// export class ScriptureController {
-//     constructor(private readonly scriptureService: ScripturesService) { }
-// }
+@Controller('scriptures')
+export class ScripturesController {
+    constructor() { }
+}
