@@ -26,8 +26,9 @@ export default async function summarizeText() {
       llm_gateway_data,
       { headers }
     );
-    console.log(result.data.choices[0].message.content);
-    console.log(typeof result.data.choices[0].message.content);
+    // console.log(result.data.choices[0].message.content);
+    // console.log(typeof result.data.choices[0].message.content);
+    return(result.data.choices[0].message.content);
 
   } catch (error) {
     console.error("Error summarizing text:", error);
