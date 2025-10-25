@@ -163,7 +163,7 @@ export class ScripturesService {
             name: 'Doctrine and Covenants',
             shortName: 'dc',
             path: 'dc-testament/dc',
-            aliases: ['doctrine and covenants', 'd&c', 'dc'],
+            aliases: ['doctrine and covenants', 'd&c', 'dc', 'd and c', 'd c'],
             chapters: Array.from({ length: 138 }, (_, i) => i + 1)
         },
         // Pearl of Great Price
@@ -886,21 +886,21 @@ export class ScripturesService {
 
         // Scripture Format：(Book) (Chapter):(VerseStart) (range/list)
         // Support: (Book) (Chapter):(VerseStart-VerseEnd, Verse, VerseStart-VerseEnd)
-        const verseRangeRegex = /([a-z0-9\s]+)\s+(\d+):([\d\-,]+)/;
+        const verseRangeRegex = /([a-z0-9\s&]+)\s+(\d+):([\d\-,]+)/;
 
         // Chpater Verse Format：(Book) (ChapterStart)-(ChapterEnd)
         // Support: (Book) (ChapterStart) to/through (ChapterEnd)
-        const chapterRangeRegex = /([a-z0-9\s]+)\s+(\d+)\s*-\s*(\d+)\s*(?!:)/;
+        const chapterRangeRegex = /([a-z0-9\s&]+)\s+(\d+)\s*-\s*(\d+)\s*(?!:)/;
 
         // single scripture Format：(Book) (Chapter)
-        const chapterOnlyRegex = /([a-z0-9\s]+)\s+(\d+)\s*(?![:\-])/;
+        const chapterOnlyRegex = /([a-z0-9\s&]+)\s+(\d+)\s*(?![:\-])/;
 
         let match;
         let bookAlias: string;
         let chapter: number;
-        let verse: number = 0;
-        let endVerse: number = 0;
-        let endChapter: number = 0;
+        let verse: number | undefined = undefined;
+        let endVerse: number | undefined = undefined;
+        let endChapter: number | undefined = undefined;
         let urlFragment: string = '';
         let originalText: string = '';
 
@@ -932,7 +932,7 @@ export class ScripturesService {
             }
 
             // 處理 URL 片段
-            urlFragment = `${chapter}/${verse}`;
+            urlFragment = `${chapter}.${verse}`;
             if (endVerse) urlFragment += `-${endVerse}`;
 
             // --- 嘗試匹配章節範圍 (Book Chapter-Chapter) ---
@@ -969,11 +969,11 @@ export class ScripturesService {
                 return {
                     book: book.name,
                     chapter: chapter,
-                    verse: verse, // 只有單節時有值
-                    endVerse: endVerse,
-                    endChapter: endChapter,
+                    verse: verse, // 只有單節時有值，否則為 undefined
+                    endVerse: endVerse, // 只有範圍時有值，否則為 undefined
+                    endChapter: endChapter, // 只有章節範圍時有值，否則為 undefined
                     url: url,
-                    originalText: originalText // 存儲原始文字
+                    originalText: originslText // 存儲原始文字
                 };
             }
         }
@@ -1050,30 +1050,38 @@ export class ScripturesService {
     public async extractScriptureReferences(text: string): Promise<ScriptureReference[]> {
         const references: ScriptureReference[] = [];
 
-        // 整合所有經文引用格式的正則表達式
-        // \s* (?:chapter\s+|verse\s+|:|-) 是用來處理數字之間的連字符、冒號、逗號等
-        const complexReferenceRegex =
-            /([A-Za-z0-9\s]+)\s+([\d\w\s,:;.\-\'"]+)/gi; // 匹配書名後接任何可能的章節/節號組合
-
-        let cleanText = this.convertWordsToNumbers(text);
-        let match;
+        // 使用更簡單的方法：分割文本並檢查每個可能的引用
+        const words = text.split(/\s+/);
         const processedSpans = new Set<string>();
 
-        while ((match = complexReferenceRegex.exec(cleanText)) !== null) {
-            const fullMatch = match[0];
-            const bookAlias = match[1].trim();
-
-            // 檢查書名是否有效
-            if (!this.findBookByAlias(bookAlias)) continue;
-
-            // 確保不處理重複的片段
-            if (processedSpans.has(fullMatch)) continue;
-            processedSpans.add(fullMatch);
-
-            // toStudyUrl 會嘗試解析 numbersAndSymbols
-            const scriptureRef = this.toStudyUrl(fullMatch, fullMatch);
-            if (scriptureRef) {
-                references.push(scriptureRef);
+        for (let i = 0; i < words.length; i++) {
+            // 檢查當前詞是否可能是書名
+            let potentialBook = words[i];
+            let j = i;
+            
+            // 嘗試構建可能的書名（最多3個詞）
+            while (j < words.length && j < i + 3) {
+                const testBook = words.slice(i, j + 1).join(' ');
+                
+                if (this.findBookByAlias(testBook)) {
+                    // 找到書名，檢查後面是否有章節/節號
+                    if (j + 1 < words.length) {
+                        const nextPart = words.slice(j + 1, j + 4).join(' '); // 取最多3個詞作為章節/節號
+                        const fullReference = `${testBook} ${nextPart}`;
+                        
+                        if (!processedSpans.has(fullReference)) {
+                            processedSpans.add(fullReference);
+                            
+                            const scriptureRef = this.toStudyUrl(fullReference, fullReference);
+                            if (scriptureRef) {
+                                references.push(scriptureRef);
+                                i = j + 1; // 跳過已處理的詞
+                                break;
+                            }
+                        }
+                    }
+                }
+                j++;
             }
         }
 
@@ -1097,6 +1105,10 @@ export class ScripturesService {
         });
 
         // 2. 處理 word_search_matches 列表
+        if (!transcript.word_search_matches || !Array.isArray(transcript.word_search_matches)) {
+            return timedReferences;
+        }
+        
         for (const match of transcript.word_search_matches) {
             const normalizedText = this.normalizeForLookup(match.text);
 
@@ -1144,6 +1156,27 @@ export class ScripturesService {
         }
 
         return timedReferences;
+    }
+    /**
+     * 【新】從資料庫中獲取所有可能的經文書名和別名作為 AssemblyAI 的關鍵詞。
+     * @returns 唯一的字串陣列，包含所有書名及其別名。
+     */
+    public getAllScriptureKeywords(): string[] {
+        const keywords = new Set<string>();
+
+        Object.values(this.scriptureDatabase).forEach(book => {
+            // 添加完整的書名 (e.g., "1 Nephi", "Doctrine and Covenants")
+            keywords.add(book.name.toLowerCase());
+            // 添加所有別名 (e.g., "first nephi", "d&c", "bom")
+            book.aliases.forEach(alias => keywords.add(alias.toLowerCase()));
+            // 添加短名 (e.g., "1-ne")
+            keywords.add(book.shortName.toLowerCase());
+        });
+
+        // 移除可能存在的重複項並返回陣列
+        // AssemblyAI 推薦使用小寫
+        return Array.from(keywords)
+            .filter(k => k && k.length > 0);
     }
 
 
