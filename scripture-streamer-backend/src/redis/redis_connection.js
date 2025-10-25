@@ -33,37 +33,45 @@ try{
 const summary = await summarizeText();
 console.log(summary)
 
-// let UserName = '';//get this from front-end when user type their name in the beginning
-// let FileName = ''; //get this from front-end when user enter their file/speech name
-// const data = [{
-//     name: UserName,
-//     speech_topic: FileName,
-//     summary_content: await summarizeText() //get the summary from assemblyAI
-// }];
+let UserName = 'tryUser1';//get this from front-end when user type their name in the beginning
+let FileName = 'tryTopic1'; //get this from front-end when user enter their file/speech name
+const data = [{
+    // name: UserName,
+    speech_topic: FileName,
+    summary_content: await summarizeText() //get the summary from assemblyAI
+}];
 
-// const prefix = 'AStest:';
+const prefix = 'AStest:';
 
 
-// //decide the data type
-// await client.ft.create(`idx:${prefix}`, { //idx is a prefix for key
-//     '$.name': {
-//         type: SCHEMA_FIELD_TYPE.TEXT,
-//         AS: 'name'
-//     },
-//     '$.speech_topic': {
-//         type: SCHEMA_FIELD_TYPE.TEXT,
-//         AS: 'speech_topic'
-//     },
-//     '$.summary_content': {
-//         type: SCHEMA_FIELD_TYPE.TEXT,
-//         AS: 'summary_content'
-//     }
-// }, {
-//     ON: 'JSON',
-//     PREFIX: ${prefix}
-// });
+//decide the data type
+await client.ft.create(`idx:${prefix}`, { //idx is a prefix for key
+    // '$.name': {
+    //     type: SCHEMA_FIELD_TYPE.TEXT,
+    //     AS: 'name'
+    // },
+    '$.speech_topic': {
+        type: SCHEMA_FIELD_TYPE.TEXT,
+        AS: 'speech_topic'
+    },
+    '$.summary_content': {
+        type: SCHEMA_FIELD_TYPE.TEXT,
+        AS: 'summary_content'
+    }
+}, {
+    ON: 'JSON',
+    PREFIX: [prefix]
+}).catch((err) => {
+  if (!err.message.includes('Index already exists')) throw err;
+});;
 
-// //store data to redis
+//store data to redis
+try {
+  const result = await client.json.set(`${prefix}${UserName}`, '$', data);
+  console.log('User stored:', result);
+} catch (err) {
+  console.error('Error storing user:', err);
+}
 // try {
 //     const speeches = await Promise.all(
 //     userInputs.map(async (user) => ({
